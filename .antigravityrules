@@ -1,0 +1,9 @@
+# Antigravity Permanent Workspace Rules: Chronos HSC
+
+## AUTO-UPDATE & RELEASE WORKFLOW (MANDATORY ON EVERY BUILD/UPDATE)
+Whenever the user asks to update the app, fix a bug, or generate an APK:
+1. Increment `versionCode` by +1 and bump `versionName` in `app/build.gradle.kts`.
+2. Update `version.json` in the project root matching `versionCode`, `versionName`, `apkUrl`, and `releaseNotes`.
+3. Always sign using the permanent `app/keystore/release-key.jks` (configured in `keystore.properties` and shared across `debug` and `release`).
+4. Output exact file paths for the newly signed APK and updated `version.json`.
+5. Push APK and changes to GitHub repo https://github.com/Shajidur-Rahman/To_Do_Task_STUDY.git.

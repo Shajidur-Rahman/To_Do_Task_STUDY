@@ -1,19 +1,39 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
 
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        load(FileInputStream(keystorePropertiesFile))
+    }
+}
+
 android {
     namespace = "com.chronos.hsc"
     compileSdk = 34
+
+    signingConfigs {
+        create("releaseConfig") {
+            val keyStorePath = keystoreProperties.getProperty("storeFile") ?: "app/keystore/release-key.jks"
+            storeFile = rootProject.file(keyStorePath)
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+        }
+    }
 
     defaultConfig {
         applicationId = "com.chronos.hsc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -24,10 +44,14 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("releaseConfig")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("releaseConfig")
         }
     }
 
@@ -42,6 +66,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -91,4 +116,59 @@ dependencies {
 
     // Android WorkManager for Background Study Briefings & Domino Alerts
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+}
+
+tasks.register("buildAutoUpdateRelease") {
+    group = "distribution"
+    description = "Increments versionCode, syncs version.json, builds signed release APK, and copies to release/ and project root."
+
+    doFirst {
+        val buildGradleFile = file("build.gradle.kts")
+        val buildGradleText = buildGradleFile.readText()
+
+        val versionCodeRegex = Regex("""versionCode\s*=\s*(\d+)""")
+        val versionNameRegex = Regex("""versionName\s*=\s*"([^"]+)"""")
+
+        val currentVersionCode = versionCodeRegex.find(buildGradleText)?.groupValues?.get(1)?.toInt() ?: 1
+        val currentVersionName = versionNameRegex.find(buildGradleText)?.groupValues?.get(1) ?: "1.0.0"
+
+        val newVersionCode = currentVersionCode + 1
+        val versionParts = currentVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
+        while (versionParts.size < 3) versionParts.add(0)
+        versionParts[2] = versionParts[2] + 1
+        val newVersionName = versionParts.joinToString(".")
+
+        val updatedBuildGradleText = buildGradleText
+            .replaceFirst(versionCodeRegex, "versionCode = $newVersionCode")
+            .replaceFirst(versionNameRegex, """versionName = "$newVersionName"""")
+
+        buildGradleFile.writeText(updatedBuildGradleText)
+        println("🚀 BUMPED: versionCode=$newVersionCode, versionName=$newVersionName")
+
+        val versionJsonFile = rootProject.file("version.json")
+        val newJsonContent = """{
+  "versionCode": $newVersionCode,
+  "versionName": "$newVersionName",
+  "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk",
+  "releaseNotes": "Version $newVersionName build $newVersionCode with latest feature upgrades and performance optimizations."
+}"""
+        versionJsonFile.writeText(newJsonContent)
+        println("📝 UPDATED: version.json (versionCode=$newVersionCode, versionName=$newVersionName)")
+    }
+
+    dependsOn("assembleRelease")
+
+    doLast {
+        val builtApk = file("build/outputs/apk/release/app-release.apk")
+        if (builtApk.exists()) {
+            val releaseDir = rootProject.file("release")
+            if (!releaseDir.exists()) releaseDir.mkdirs()
+            val targetReleaseApk = File(releaseDir, "app-release.apk")
+            builtApk.copyTo(targetReleaseApk, overwrite = true)
+            builtApk.copyTo(rootProject.file("Chronos_HSC_Smart_Study_Engine.apk"), overwrite = true)
+            println("✅ SIGNED APK COPIED TO: ${targetReleaseApk.absolutePath}")
+            println("✅ ROOT APK COPIED TO: ${rootProject.file("Chronos_HSC_Smart_Study_Engine.apk").absolutePath}")
+            println("📄 VERSION JSON AT: ${rootProject.file("version.json").absolutePath}")
+        }
+    }
 }

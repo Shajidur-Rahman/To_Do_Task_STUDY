@@ -4,10 +4,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.chronos.hsc.ui.components.AppUpdateDialog
 import com.chronos.hsc.ui.screens.MainScreen
 import com.chronos.hsc.ui.theme.ChronosHscTheme
 import com.chronos.hsc.ui.viewmodel.StudyViewModel
+import com.chronos.hsc.updater.UpdateManager
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,7 +29,34 @@ class MainActivity : ComponentActivity() {
                 val studyViewModel: StudyViewModel = viewModel(
                     factory = StudyViewModel.provideFactory(appContainer.studyRepository)
                 )
+                val updateManager = remember { UpdateManager(applicationContext) }
+                val availableUpdate by updateManager.availableUpdate.collectAsState()
+                val downloadState by updateManager.downloadState.collectAsState()
+                val coroutineScope = rememberCoroutineScope()
+
+                LaunchedEffect(Unit) {
+                    updateManager.checkForUpdates()
+                }
+
                 MainScreen(viewModel = studyViewModel)
+
+                availableUpdate?.let { updateInfo ->
+                    AppUpdateDialog(
+                        updateInfo = updateInfo,
+                        downloadState = downloadState,
+                        onStartUpdate = {
+                            coroutineScope.launch {
+                                updateManager.downloadAndInstall(updateInfo)
+                            }
+                        },
+                        onRetryInstall = { apkUri ->
+                            updateManager.retryInstallAfterPermission(apkUri)
+                        },
+                        onDismiss = {
+                            updateManager.dismissUpdate()
+                        }
+                    )
+                }
             }
         }
     }
