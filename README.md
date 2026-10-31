@@ -7,7 +7,8 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.0-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Room SQLite](https://img.shields.io/badge/Room%20DB-Cascade%20ForeignKeys-FFA000?style=for-the-badge&logo=sqlite&logoColor=white)](https://developer.android.com/training/data-storage/room)
-[![License](https://img.shields.io/badge/License-Apache%202.0-00E5FF?style=for-the-badge)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v1.2.0-00E5FF?style=for-the-badge&logo=github)](https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/releases/tag/v1.2.0)
+[![License](https://img.shields.io/badge/License-Apache%202.0-7F52FF?style=for-the-badge)](LICENSE)
 
 <br/>
 
@@ -15,8 +16,8 @@
 
 ---
 
-### 📦 [Direct Download APK (Latest Build)](https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk)
-*Ready-to-install Android package (`.apk` • ~18 MB • Offline-First)*
+### 📦 [Download Official Release APK (v1.2.0)](https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/releases/download/v1.2.0/Chronos_HSC_Smart_Study_Engine.apk) • [Direct Repo APK](https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk)
+*Ready-to-install Android package (`.apk` • ~21 MB • Offline-First)*
 
 </div>
 
