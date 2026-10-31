@@ -1,6 +1,7 @@
 package com.chronos.hsc.data.repository
 
 import android.content.Context
+import com.chronos.hsc.data.backup.ChronosFullBackupDto
 import com.chronos.hsc.data.local.ConfidenceRating
 import com.chronos.hsc.data.local.DailyTaskSlice
 import com.chronos.hsc.data.local.DistributionCurve
@@ -22,8 +23,13 @@ import com.chronos.hsc.domain.NeuroTelemetrySummary
 import com.chronos.hsc.domain.SliceCompletionResult
 import com.chronos.hsc.domain.SubjectAnalyticsSummary
 import com.chronos.hsc.widget.ChronosWidgetUpdater
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+import java.io.InputStream
+import java.io.OutputStream
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.math.max
@@ -690,6 +696,74 @@ class StudyRepository(
                 lastStudyEpochDay = today
             )
         )
+    }
+
+    // =========================================================================
+    // DATABASE BACKUP & RESTORE
+    // =========================================================================
+
+    suspend fun createFullBackupDto(): ChronosFullBackupDto = withContext(Dispatchers.IO) {
+        val userStats = dao.getUserStatsOnce() ?: UserStats()
+        val chains = dao.getAllChainsOnce()
+        val slices = dao.getAllSlicesOnce()
+        val exams = dao.getAllExamsOnce()
+        val neuroSessions = dao.getAllNeuroSessionsOnce()
+
+        ChronosFullBackupDto(
+            backupVersion = 1,
+            exportTimestamp = System.currentTimeMillis(),
+            userStats = userStats,
+            chains = chains,
+            slices = slices,
+            exams = exams,
+            neuroSessions = neuroSessions
+        )
+    }
+
+    suspend fun exportBackupToJsonStream(outputStream: OutputStream): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val backupDto = createFullBackupDto()
+            val jsonString = backupDto.toJsonString()
+            outputStream.bufferedWriter().use { writer ->
+                writer.write(jsonString)
+                writer.flush()
+            }
+            Result.success(backupDto.slices.size)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun restoreBackupFromJsonStream(inputStream: InputStream): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val jsonString = inputStream.bufferedReader().use { it.readText() }
+            val backupDto = ChronosFullBackupDto.fromJsonString(jsonString)
+
+            dao.restoreFullDatabase(
+                userStats = backupDto.userStats,
+                chains = backupDto.chains,
+                slices = backupDto.slices,
+                exams = backupDto.exams,
+                neuroSessions = backupDto.neuroSessions
+            )
+
+            ChronosWidgetUpdater.requestUpdate(appContext)
+            Result.success("Restored ${backupDto.chains.size} chapters and ${backupDto.slices.size} slices cleanly!")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun getTodaySlicesSnapshot(todayEpochDay: Long): List<SliceWithParentChain> {
+        return dao.observeSlicesForDate(todayEpochDay).first()
+    }
+
+    suspend fun getOverdueSlicesSnapshot(todayEpochDay: Long): List<SliceWithParentChain> {
+        return dao.observeOverdueSlices(todayEpochDay).first()
+    }
+
+    suspend fun getPinnedExamSnapshot(): ExamCountdownEntity? {
+        return dao.observePinnedExam().first()
     }
 
     companion object {

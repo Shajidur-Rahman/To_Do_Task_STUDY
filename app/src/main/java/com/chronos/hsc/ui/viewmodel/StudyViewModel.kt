@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
+import android.content.ContentResolver
+import android.content.Context
+import android.net.Uri
+import com.chronos.hsc.notification.ChronosWorkScheduler
+
 data class SprintTimerState(
     val targetSliceId: String,
     val targetSliceTitle: String,
@@ -73,6 +78,9 @@ data class StudyUiState(
     val neuroTelemetry: NeuroTelemetrySummary = NeuroTelemetrySummary(),
     val isAddTopicModalOpen: Boolean = false,
     val isExamModalOpen: Boolean = false,
+    val isAccountabilityModalOpen: Boolean = false,
+    val morningBriefingEnabled: Boolean = true,
+    val dominoAlertsEnabled: Boolean = true,
     val slicePendingDelete: SliceWithParentChain? = null,
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
@@ -83,6 +91,9 @@ data class StudyUiState(
 private data class ModalControlState(
     val isAddTopicModalOpen: Boolean = false,
     val isExamModalOpen: Boolean = false,
+    val isAccountabilityModalOpen: Boolean = false,
+    val morningBriefingEnabled: Boolean = true,
+    val dominoAlertsEnabled: Boolean = true,
     val slicePendingDelete: SliceWithParentChain? = null,
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
@@ -187,6 +198,9 @@ class StudyViewModel(
             neuroTelemetry = examAndNeuro.neuroTelemetry,
             isAddTopicModalOpen = modals.isAddTopicModalOpen,
             isExamModalOpen = modals.isExamModalOpen,
+            isAccountabilityModalOpen = modals.isAccountabilityModalOpen,
+            morningBriefingEnabled = modals.morningBriefingEnabled,
+            dominoAlertsEnabled = modals.dominoAlertsEnabled,
             slicePendingDelete = modals.slicePendingDelete,
             chainPendingDelete = modals.chainPendingDelete,
             conqueredChainForEchoDialog = modals.conqueredChainForEchoDialog,
@@ -613,6 +627,64 @@ class StudyViewModel(
                 )
             )
         }
+    }
+
+    fun openAccountabilityModal() {
+        modalControlFlow.update { it.copy(isAccountabilityModalOpen = true) }
+    }
+
+    fun closeAccountabilityModal() {
+        modalControlFlow.update { it.copy(isAccountabilityModalOpen = false) }
+    }
+
+    fun exportDatabaseBackup(uri: Uri, contentResolver: ContentResolver) {
+        viewModelScope.launch {
+            try {
+                val outputStream = contentResolver.openOutputStream(uri)
+                if (outputStream == null) {
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "Failed to open destination file for export"))
+                    return@launch
+                }
+                val result = repository.exportBackupToJsonStream(outputStream)
+                result.onSuccess { sliceCount ->
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "✅ Exported $sliceCount study slices to JSON backup!"))
+                }.onFailure { err ->
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "Export failed: ${err.localizedMessage}"))
+                }
+            } catch (e: Exception) {
+                _events.emit(StudyUiEvent.ShowSnackbar(message = "Export error: ${e.localizedMessage}"))
+            }
+        }
+    }
+
+    fun restoreDatabaseBackup(uri: Uri, contentResolver: ContentResolver) {
+        viewModelScope.launch {
+            try {
+                val inputStream = contentResolver.openInputStream(uri)
+                if (inputStream == null) {
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "Failed to open source file for restore"))
+                    return@launch
+                }
+                val result = repository.restoreBackupFromJsonStream(inputStream)
+                result.onSuccess { msg ->
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "✅ $msg"))
+                }.onFailure { err ->
+                    _events.emit(StudyUiEvent.ShowSnackbar(message = "Restore failed: ${err.localizedMessage}"))
+                }
+            } catch (e: Exception) {
+                _events.emit(StudyUiEvent.ShowSnackbar(message = "Restore error: ${e.localizedMessage}"))
+            }
+        }
+    }
+
+    fun toggleMorningBriefing(context: Context, enabled: Boolean) {
+        modalControlFlow.update { it.copy(morningBriefingEnabled = enabled) }
+        ChronosWorkScheduler.scheduleDailyBriefing(context, enabled)
+    }
+
+    fun toggleDominoAlerts(context: Context, enabled: Boolean) {
+        modalControlFlow.update { it.copy(dominoAlertsEnabled = enabled) }
+        ChronosWorkScheduler.scheduleDominoAlerts(context, enabled)
     }
 
     private data class CoreDashboardData(

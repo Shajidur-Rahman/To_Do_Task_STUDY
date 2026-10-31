@@ -1,5 +1,9 @@
 package com.chronos.hsc.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -42,6 +46,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.Button
@@ -73,6 +78,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -84,6 +90,8 @@ import com.chronos.hsc.data.local.ExamCountdownEntity
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
+import com.chronos.hsc.notification.ChronosNotificationHelper
+import com.chronos.hsc.ui.components.AccountabilityCardModal
 import com.chronos.hsc.ui.components.AddHscTopicModal
 import com.chronos.hsc.ui.components.BossHealthBar
 import com.chronos.hsc.ui.components.CascadeDeleteDialog
@@ -125,9 +133,22 @@ private enum class ChronosTab(val label: String) {
 fun MainScreen(
     viewModel: StudyViewModel
 ) {
+    val context = LocalContext.current
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!ChronosNotificationHelper.hasNotificationPermission(context)) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -237,6 +258,7 @@ fun MainScreen(
                     onOpenNeuroGymQuickRescue = {
                         selectedTabIndex = ChronosTab.NEURO_GYM.ordinal
                     },
+                    onOpenAccountability = viewModel::openAccountabilityModal,
                     onIncrementProblem = viewModel::incrementProblemSubCounter,
                     onDecrementProblem = viewModel::decrementProblemSubCounter,
                     onCompleteSlice = viewModel::completeTaskSlice,
@@ -260,7 +282,8 @@ fun MainScreen(
                     onJumpToSliceDate = { epochDay ->
                         viewModel.selectDate(epochDay)
                         selectedTabIndex = 0
-                    }
+                    },
+                    onOpenAccountabilityModal = viewModel::openAccountabilityModal
                 )
 
                 ChronosTab.NEURO_GYM -> NeuroGymScreen(
@@ -323,6 +346,33 @@ fun MainScreen(
                 onSaveAndPinExam = viewModel::saveAndPinExam,
                 onPinExam = viewModel::pinExam,
                 onDeleteExam = viewModel::deleteExam
+            )
+        }
+
+        // 6. Accountability, Shareable Cyberpunk Card & Full Offline Backup Modal
+        if (state.isAccountabilityModalOpen) {
+            AccountabilityCardModal(
+                todayEpochDay = state.todayEpochDay,
+                userStats = state.userStats,
+                pinnedExam = state.pinnedExam,
+                completedSlicesCount = state.visibleDateSlices.count { it.slice.isCompleted },
+                totalProblemsToday = state.visibleDateSlices.sumOf { it.slice.problemsCompleted },
+                activeBossesCount = state.allChainsWithSlices.count { !it.chain.isChainCompleted },
+                onDismiss = viewModel::closeAccountabilityModal,
+                onExportBackup = { uri ->
+                    viewModel.exportDatabaseBackup(uri, context.contentResolver)
+                },
+                onRestoreBackup = { uri ->
+                    viewModel.restoreDatabaseBackup(uri, context.contentResolver)
+                },
+                onToggleMorningBriefing = { enabled ->
+                    viewModel.toggleMorningBriefing(context, enabled)
+                },
+                onToggleDominoAlerts = { enabled ->
+                    viewModel.toggleDominoAlerts(context, enabled)
+                },
+                morningBriefingEnabled = state.morningBriefingEnabled,
+                dominoAlertsEnabled = state.dominoAlertsEnabled
             )
         }
     }
@@ -445,6 +495,7 @@ private fun TodayBattlegroundTab(
     onOpenRoulette: () -> Unit,
     onOpenAddTopic: () -> Unit,
     onOpenNeuroGymQuickRescue: () -> Unit,
+    onOpenAccountability: () -> Unit,
     onIncrementProblem: (String) -> Unit,
     onDecrementProblem: (String) -> Unit,
     onCompleteSlice: (String) -> Unit,
@@ -465,7 +516,8 @@ private fun TodayBattlegroundTab(
                 userStats = state.userStats,
                 selectedBatteryMode = state.batteryMode,
                 onSelectBatteryMode = onSelectBatteryMode,
-                onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue
+                onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
+                onOpenAccountability = onOpenAccountability
             )
         }
 
@@ -638,7 +690,8 @@ private fun BattlegroundTopHeader(
     userStats: UserStats,
     selectedBatteryMode: EnergyLevel,
     onSelectBatteryMode: (EnergyLevel) -> Unit,
-    onOpenNeuroGymQuickRescue: () -> Unit
+    onOpenNeuroGymQuickRescue: () -> Unit,
+    onOpenAccountability: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -691,30 +744,63 @@ private fun BattlegroundTopHeader(
                 )
             }
 
-            // Streak Badge
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = CyberOrange.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, CyberOrange)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // Streak & Card Hub Actions
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Streak Badge
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = CyberOrange.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, CyberOrange)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.LocalFireDepartment,
-                        contentDescription = "Streak",
-                        tint = CyberOrange,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${userStats.streakDays}d Streak",
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 12.sp,
-                        color = CyberOrange
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocalFireDepartment,
+                            contentDescription = "Streak",
+                            tint = CyberOrange,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${userStats.streakDays}d Streak",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                            color = CyberOrange
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 1-Tap Share Card & Backup Hub Button
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = CyberCyan.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, CyberCyan),
+                    modifier = Modifier.clickable { onOpenAccountability() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Share Progress",
+                            tint = CyberCyan,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Card",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = CyberCyan
+                        )
+                    }
                 }
             }
         }
@@ -1639,7 +1725,8 @@ private fun ActiveChainsTab(
 @Composable
 private fun AnalyticsAndHeatmapTab(
     state: StudyUiState,
-    onJumpToSliceDate: (Long) -> Unit
+    onJumpToSliceDate: (Long) -> Unit,
+    onOpenAccountabilityModal: () -> Unit
 ) {
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
@@ -1662,6 +1749,57 @@ private fun AnalyticsAndHeatmapTab(
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
+            }
+        }
+
+        // Accountability, Card Sharing & Full Backup Hub Banner
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = ObsidianSurface,
+                border = BorderStroke(1.5.dp, CyberCyan.copy(alpha = 0.65f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenAccountabilityModal() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "🛡️ ACCOUNTABILITY & BACKUP HUB",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.sp,
+                            color = CyberCyan
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "1-Tap 1080x1350 Cyberpunk Card • JSON Full Backup & Restore • 08:00 AM & 09:00 PM Notifications",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            lineHeight = 15.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Button(
+                        onClick = onOpenAccountabilityModal,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CyberCyan,
+                            contentColor = ObsidianBackground
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Open Hub 🚀",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
         }
 

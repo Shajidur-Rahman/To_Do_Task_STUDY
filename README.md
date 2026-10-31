@@ -104,6 +104,15 @@ graph TD
   $$\text{Daily Effort Score} = (\text{Completed Slices} \times 25) + (\text{Problems Solved} \times 5)$$
 - Interactive **Jetpack Glance Home Screen Widget** for glancing at today's battleground directly from your Android launcher.
 
+### 9. 🛡️ 1-Tap Cyberpunk Progress Card & Offline JSON Backup/Restore
+- **1-Tap 1080x1350 Cyberpunk Card:** High-resolution native Android `Bitmap` generator creating an Instagram/WhatsApp story-ready proof-of-work card complete with Level, XP, current streak, exam countdown, solved problem counters, and dynamic motivational quote.
+- **Offline Full JSON Backup & Restore:** Zero cloud dependencies. Export all study chapters, daily task slices, target exams, and neuro-gym sessions into a timestamped `.json` file via Storage Access Framework (SAF), and safely restore anytime.
+
+### 10. 🔔 Smart WorkManager Study Notifications
+- **08:00 AM Morning Battleground Briefing:** Automated background overview of today's scheduled study slices, active streak counter, and target exam countdown.
+- **09:00 PM Domino Shift Alert:** Nightly safety check alerting you when any slice is left incomplete before bed, prompting a 1-tap Domino Shift to preserve momentum without guilt.
+- **Built on Android WorkManager:** Reliable execution across system reboots and Doze mode with user-configurable switches and instant test triggers.
+
 ---
 
 ## 🛠️ Architecture & Tech Stack
@@ -111,18 +120,27 @@ graph TD
 ```
 com.chronos.hsc
 ├── data
+│   ├── backup
+│   │   └── BackupDataModels.kt    # Full JSON serialization & deserialization DTOs
 │   ├── local
 │   │   ├── Entities.kt            # Room entities (TopicChain, DailySlice, ExamCountdown, NeuroSession)
 │   │   ├── Enums.kt               # HscSubject, HscPaper, EnergyLevel, NeuroDrillType, etc.
 │   │   ├── RoomTypeConverters.kt  # Enum & Date Room type converters
-│   │   ├── StudyDao.kt            # Reactive SQLite queries & @Transaction cascade operations
+│   │   ├── StudyDao.kt            # Reactive SQLite queries & @Transaction cascade/backup operations
 │   │   └── StudyDatabase.kt       # Room Database v3 with safe MIGRATION_2_3
 │   └── repository
-│       └── StudyRepository.kt     # Single Source of Truth, XP Engine, Domino Shift, Telemetry
+│       └── StudyRepository.kt     # Single Source of Truth, XP Engine, Backup/Restore Stream IO
 ├── domain
 │   └── Models.kt                  # Clean Domain Models & Summaries
+├── notification
+│   ├── ChronosNotificationHelper.kt  # Notification channels, builders, and permission guards
+│   ├── ChronosWorkScheduler.kt       # Periodic 24h WorkManager scheduler (8:00 AM & 9:00 PM)
+│   ├── DailyBriefingWorker.kt        # Morning study slice overview worker
+│   └── DominoAlertWorker.kt          # Evening overdue task alert worker
 ├── ui
 │   ├── components                 # High-craft Material 3 components, Boss Bar, Modals, Heatmap
+│   │   ├── AccountabilityCardModal.kt # Cyberpunk card preview & backup/notification management modal
+│   │   └── BitmapShareHelper.kt       # 1080x1350 Canvas bitmap renderer & FileProvider share intent
 │   ├── screens                    # MainScreen, NeuroGymScreen, Battleground, Bosses, Analytics
 │   ├── theme                      # Obsidian Cyberpunk Dark Theme (CyberCyan, CyberMagenta, etc.)
 │   └── viewmodel
@@ -133,6 +151,7 @@ com.chronos.hsc
 
 * **UI Framework:** 100% Jetpack Compose (Material 3, Dark Obsidian Cyberpunk theme).
 * **Concurrency:** Kotlin Coroutines, `StateFlow`, `SharedFlow`, reactive database observations.
+* **Background Tasks:** Android Jetpack `WorkManager` (24h periodic morning & night study alerts).
 * **Local Persistence:** Room SQLite with strict `ForeignKey.CASCADE` relational constraints.
 * **Graphics & Haptics:** Custom Compose `Canvas` 60fps animations, Lemniscate of Bernoulli math curves, and tactile haptic feedback.
 * **Home Screen:** Jetpack Glance AppWidget.

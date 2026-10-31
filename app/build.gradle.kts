@@ -88,4 +88,7 @@ dependencies {
     // Jetpack Glance AppWidget
     implementation("androidx.glance:glance-appwidget:1.1.0")
     implementation("androidx.glance:glance-material3:1.1.0")
+
+    // Android WorkManager for Background Study Briefings & Domino Alerts
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

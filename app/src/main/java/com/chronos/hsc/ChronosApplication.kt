@@ -11,5 +11,6 @@ class ChronosApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        com.chronos.hsc.notification.ChronosNotificationHelper.createNotificationChannels(this)
     }
 }

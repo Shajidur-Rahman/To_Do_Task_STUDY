@@ -192,4 +192,55 @@ interface StudyDao {
 
     @Query("SELECT * FROM neuro_sessions ORDER BY timestamp DESC")
     fun observeAllNeuroSessions(): Flow<List<NeuroSessionEntity>>
+
+    @Query("SELECT * FROM neuro_sessions ORDER BY timestamp DESC")
+    suspend fun getAllNeuroSessionsOnce(): List<NeuroSessionEntity>
+
+    // =========================================================================
+    // FULL DATABASE BACKUP & RESTORE TRANSACTION
+    // =========================================================================
+
+    @Query("SELECT * FROM daily_task_slices")
+    suspend fun getAllSlicesOnce(): List<DailyTaskSlice>
+
+    @Query("DELETE FROM study_topic_chains")
+    suspend fun deleteAllChains()
+
+    @Query("DELETE FROM daily_task_slices")
+    suspend fun deleteAllSlices()
+
+    @Query("DELETE FROM exam_countdowns")
+    suspend fun deleteAllExams()
+
+    @Query("DELETE FROM neuro_sessions")
+    suspend fun deleteAllNeuroSessions()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllChains(chains: List<StudyTopicChain>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllExams(exams: List<ExamCountdownEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllNeuroSessions(sessions: List<NeuroSessionEntity>)
+
+    @Transaction
+    suspend fun restoreFullDatabase(
+        userStats: UserStats,
+        chains: List<StudyTopicChain>,
+        slices: List<DailyTaskSlice>,
+        exams: List<ExamCountdownEntity>,
+        neuroSessions: List<NeuroSessionEntity>
+    ) {
+        deleteAllSlices()
+        deleteAllChains()
+        deleteAllExams()
+        deleteAllNeuroSessions()
+
+        upsertUserStats(userStats)
+        if (chains.isNotEmpty()) insertAllChains(chains)
+        if (slices.isNotEmpty()) insertSlices(slices)
+        if (exams.isNotEmpty()) insertAllExams(exams)
+        if (neuroSessions.isNotEmpty()) insertAllNeuroSessions(neuroSessions)
+    }
 }
