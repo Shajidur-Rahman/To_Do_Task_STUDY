@@ -195,7 +195,7 @@ fun AddHscTopicModal(
             Spacer(modifier = Modifier.height(14.dp))
 
             // 1. Subject Selector
-            SectionLabel("1. HSC SCIENCE SUBJECT")
+            SectionLabel("1. HSC SUBJECT")
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -409,7 +409,7 @@ fun AddHscTopicModal(
                 value = chapterTitle,
                 onValueChange = { chapterTitle = it },
                 label = { Text("Chapter Title / Topic Name (Optional)") },
-                placeholder = { Text("e.g., Vector, Matrix & Determinants, Organic Chemistry") },
+                placeholder = { Text("e.g., Oparichita, Modifiers, Vector, Organic Chemistry") },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = subjectColor,

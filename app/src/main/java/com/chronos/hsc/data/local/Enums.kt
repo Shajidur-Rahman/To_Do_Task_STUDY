@@ -5,6 +5,16 @@ enum class HscSubject(
     val shortCode: String,
     val colorHex: Long
 ) {
+    BANGLA(
+        fullName = "Bangla",
+        shortCode = "BN",
+        colorHex = 0xFFFF4081
+    ),
+    ENGLISH(
+        fullName = "English",
+        shortCode = "EN",
+        colorHex = 0xFF536DFE
+    ),
     PHYSICS(
         fullName = "Physics",
         shortCode = "P",
@@ -126,5 +136,88 @@ enum class ConfidenceRating(
         title = "Easy (Mastered)",
         subtitle = "Echoes at +5d, +14d, and +30d",
         intervalsInDays = listOf(5, 14, 30)
+    )
+}
+
+enum class NeuroDrillType(
+    val title: String,
+    val shortTitle: String,
+    val tag: String,
+    val mechanismSummary: String,
+    val metricUnit: String
+) {
+    FOVEAL_LOCK(
+        title = "Foveal Singularity Lock",
+        shortTitle = "Point-Staring Lock",
+        tag = "FOCUS RESTORATION",
+        mechanismSummary = "Suppresses saccadic eye drift & Default Mode Network daydreaming via thumb-anchored central fixation.",
+        metricUnit = "sec"
+    ),
+    SCHULTE_GRID(
+        title = "5x5 Schulte Speed Grid",
+        shortTitle = "5x5 Schulte Grid",
+        tag = "PERIPHERAL SPEED",
+        mechanismSummary = "Expands peripheral visual span and accelerates prefrontal-visual search velocity.",
+        metricUnit = "sec"
+    ),
+    QUANT_REFLEX(
+        title = "Quant-Reflex Velocity Blitz",
+        shortTitle = "Quant-Reflex Blitz",
+        tag = "SYNAPSE VELOCITY",
+        mechanismSummary = "High-speed arithmetic, inequality & power evaluation to prime Physics/Math problem solving.",
+        metricUnit = "QPM"
+    ),
+    SPATIAL_N_BACK(
+        title = "Spatial N-Back Matrix",
+        shortTitle = "Spatial N-Back",
+        tag = "WORKING MEMORY",
+        mechanismSummary = "Gold-standard prefrontal working-memory overload protocol (1-Back, 2-Back, 3-Back).",
+        metricUnit = "%"
+    ),
+    CHIMP_MEMORY(
+        title = "Chimp Flash Memory Vault",
+        shortTitle = "Chimp Flash Vault",
+        tag = "SPATIAL ENCODING",
+        mechanismSummary = "Trains instantaneous photographic spatial encoding and masked sequential recall.",
+        metricUnit = "Lvl"
+    ),
+    OCULOMOTOR_SIGH(
+        title = "Oculomotor Figure-8 & Sigh",
+        shortTitle = "Figure-8 & Sigh",
+        tag = "STRESS & FOG RESET",
+        mechanismSummary = "Combines smooth-pursuit Lemniscate eye tracking with the double-inhale Physiological Sigh.",
+        metricUnit = "sec"
+    )
+}
+
+enum class CognitiveProblemCategory(
+    val badgeEmoji: String,
+    val symptomTitle: String,
+    val prescriptionNote: String,
+    val recommendedDrills: List<NeuroDrillType>
+) {
+    LOST_FOCUS(
+        badgeEmoji = "🎯",
+        symptomTitle = "I Lost Focus & My Mind Is Wandering",
+        prescriptionNote = "Prescribed: Lock foveal gaze for 60s to silence daydreaming and trigger brainstem norepinephrine.",
+        recommendedDrills = listOf(NeuroDrillType.FOVEAL_LOCK, NeuroDrillType.OCULOMOTOR_SIGH)
+    ),
+    SLOW_BRAIN_SPEED(
+        badgeEmoji = "⚡",
+        symptomTitle = "My Brain Speed Is Slow & Sluggish",
+        prescriptionNote = "Prescribed: Accelerate visual-motor & quantitative synapse firing with high-velocity drills.",
+        recommendedDrills = listOf(NeuroDrillType.SCHULTE_GRID, NeuroDrillType.QUANT_REFLEX)
+    ),
+    BUILD_BRAIN_MUSCLE(
+        badgeEmoji = "💪",
+        symptomTitle = "Strengthen My Brain Muscle (Working Memory)",
+        prescriptionNote = "Prescribed: Overload dorsolateral prefrontal working memory buffers with N-Back & Masked Recall.",
+        recommendedDrills = listOf(NeuroDrillType.SPATIAL_N_BACK, NeuroDrillType.CHIMP_MEMORY)
+    ),
+    BRAIN_FOG_STRESS(
+        badgeEmoji = "🌊",
+        symptomTitle = "Brain Fog, Stress, or Syllabus Overwhelm",
+        prescriptionNote = "Prescribed: Decelerate heart rate via double-inhale Physiological Sigh + Figure-8 ocular pursuit.",
+        recommendedDrills = listOf(NeuroDrillType.OCULOMOTOR_SIGH, NeuroDrillType.FOVEAL_LOCK)
     )
 }

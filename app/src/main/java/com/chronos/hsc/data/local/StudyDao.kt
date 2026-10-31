@@ -145,4 +145,51 @@ interface StudyDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertUserStats(stats: UserStats)
+
+    // =========================================================================
+    // EXAM COUNTDOWN QUERIES
+    // =========================================================================
+
+    @Query("SELECT * FROM exam_countdowns ORDER BY isPrimaryPinned DESC, targetDateEpochDay ASC")
+    fun observeAllExams(): Flow<List<ExamCountdownEntity>>
+
+    @Query("SELECT * FROM exam_countdowns WHERE isPrimaryPinned = 1 LIMIT 1")
+    fun observePinnedExam(): Flow<ExamCountdownEntity?>
+
+    @Query("SELECT * FROM exam_countdowns ORDER BY targetDateEpochDay ASC")
+    suspend fun getAllExamsOnce(): List<ExamCountdownEntity>
+
+    @Query("UPDATE exam_countdowns SET isPrimaryPinned = 0")
+    suspend fun clearAllPinnedExams()
+
+    @Query("UPDATE exam_countdowns SET isPrimaryPinned = 1 WHERE examId = :examId")
+    suspend fun setExamPinnedById(examId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExam(exam: ExamCountdownEntity)
+
+    @Transaction
+    suspend fun upsertAndPinExam(exam: ExamCountdownEntity) {
+        clearAllPinnedExams()
+        insertExam(exam.copy(isPrimaryPinned = true))
+    }
+
+    @Transaction
+    suspend fun pinExistingExam(examId: String) {
+        clearAllPinnedExams()
+        setExamPinnedById(examId)
+    }
+
+    @Query("DELETE FROM exam_countdowns WHERE examId = :examId")
+    suspend fun deleteExam(examId: String)
+
+    // =========================================================================
+    // NEURO-GYM COGNITIVE SESSION QUERIES
+    // =========================================================================
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNeuroSession(session: NeuroSessionEntity)
+
+    @Query("SELECT * FROM neuro_sessions ORDER BY timestamp DESC")
+    fun observeAllNeuroSessions(): Flow<List<NeuroSessionEntity>>
 }

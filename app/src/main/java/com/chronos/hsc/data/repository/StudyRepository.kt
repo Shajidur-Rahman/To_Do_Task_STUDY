@@ -5,8 +5,11 @@ import com.chronos.hsc.data.local.ConfidenceRating
 import com.chronos.hsc.data.local.DailyTaskSlice
 import com.chronos.hsc.data.local.DistributionCurve
 import com.chronos.hsc.data.local.EnergyLevel
+import com.chronos.hsc.data.local.ExamCountdownEntity
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.NeuroDrillType
+import com.chronos.hsc.data.local.NeuroSessionEntity
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.StudyDao
 import com.chronos.hsc.data.local.StudyTopicChain
@@ -15,6 +18,7 @@ import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.DominoShiftResult
 import com.chronos.hsc.domain.HeatmapDayCell
+import com.chronos.hsc.domain.NeuroTelemetrySummary
 import com.chronos.hsc.domain.SliceCompletionResult
 import com.chronos.hsc.domain.SubjectAnalyticsSummary
 import com.chronos.hsc.widget.ChronosWidgetUpdater
@@ -48,6 +52,12 @@ class StudyRepository(
 
     fun observeUserStats(): Flow<UserStats> =
         dao.observeUserStats().map { it ?: UserStats() }
+
+    fun observeAllExams(): Flow<List<ExamCountdownEntity>> =
+        dao.observeAllExams()
+
+    fun observePinnedExam(): Flow<ExamCountdownEntity?> =
+        dao.observePinnedExam()
 
     /**
      * Builds the 12-week (84-day) weighted effort heatmap cells.
@@ -101,11 +111,102 @@ class StudyRepository(
     }
 
     /**
+     * Aggregates Neuro-Gym cognitive telemetry across all recorded sessions.
+     */
+    fun observeNeuroTelemetry(): Flow<NeuroTelemetrySummary> {
+        return dao.observeAllNeuroSessions().map { sessions ->
+            val fovealSeconds = sessions
+                .filter { it.drillType == NeuroDrillType.FOVEAL_LOCK }
+                .sumOf { it.durationSeconds }
+            val schulteTimes = sessions
+                .filter { it.drillType == NeuroDrillType.SCHULTE_GRID && it.scoreMetric > 0.0 }
+                .map { it.scoreMetric }
+            val quantQpms = sessions
+                .filter { it.drillType == NeuroDrillType.QUANT_REFLEX }
+                .map { it.scoreMetric.roundToInt() }
+            val nBackAccuracies = sessions
+                .filter { it.drillType == NeuroDrillType.SPATIAL_N_BACK }
+                .map { it.scoreMetric.roundToInt() }
+            val chimpLevels = sessions
+                .filter { it.drillType == NeuroDrillType.CHIMP_MEMORY }
+                .map { it.scoreMetric.roundToInt() }
+            val sighSeconds = sessions
+                .filter { it.drillType == NeuroDrillType.OCULOMOTOR_SIGH }
+                .sumOf { it.durationSeconds }
+
+            NeuroTelemetrySummary(
+                totalFocusLockSeconds = fovealSeconds,
+                totalSessionsCompleted = sessions.size,
+                fastestSchulteSeconds = schulteTimes.minOrNull(),
+                highestQuantQpm = quantQpms.maxOrNull() ?: 0,
+                highestNBackAccuracyPercent = nBackAccuracies.maxOrNull() ?: 0,
+                maxChimpMemorySpan = chimpLevels.maxOrNull() ?: 0,
+                totalOculomotorResetSeconds = sighSeconds,
+                recentSessions = sessions.take(8)
+            )
+        }
+    }
+
+    /**
      * Syncs any overdue Boss Shields on application startup without inserting any fake data.
      */
     suspend fun initializeOnLaunch() {
         syncOverdueBossShields(LocalDate.now().toEpochDay())
         ChronosWidgetUpdater.requestUpdate(appContext)
+    }
+
+    // =========================================================================
+    // EXAM COUNTDOWN REPOSITORY METHODS
+    // =========================================================================
+
+    suspend fun saveAndPinExam(
+        examTitle: String,
+        targetDateEpochDay: Long
+    ): ExamCountdownEntity {
+        val cleanTitle = examTitle.trim().ifEmpty { "HSC Exam" }
+        val exam = ExamCountdownEntity(
+            examId = UUID.randomUUID().toString(),
+            examTitle = cleanTitle,
+            targetDateEpochDay = targetDateEpochDay,
+            createdAtEpochDay = LocalDate.now().toEpochDay(),
+            isPrimaryPinned = true
+        )
+        dao.upsertAndPinExam(exam)
+        return exam
+    }
+
+    suspend fun pinExam(examId: String) {
+        dao.pinExistingExam(examId)
+    }
+
+    suspend fun deleteExam(examId: String) {
+        dao.deleteExam(examId)
+        val remaining = dao.getAllExamsOnce()
+        if (remaining.isNotEmpty() && remaining.none { it.isPrimaryPinned }) {
+            dao.pinExistingExam(remaining.first().examId)
+        }
+    }
+
+    // =========================================================================
+    // NEURO-GYM SESSION RECORDING
+    // =========================================================================
+
+    suspend fun recordCompletedNeuroSession(
+        drillType: NeuroDrillType,
+        scoreMetric: Double,
+        durationSeconds: Int
+    ): Int {
+        val session = NeuroSessionEntity(
+            sessionId = UUID.randomUUID().toString(),
+            drillType = drillType,
+            scoreMetric = scoreMetric,
+            durationSeconds = durationSeconds,
+            timestamp = System.currentTimeMillis()
+        )
+        dao.insertNeuroSession(session)
+        val xpAwarded = 25
+        awardXp(xpAwarded)
+        return xpAwarded
     }
 
     /**

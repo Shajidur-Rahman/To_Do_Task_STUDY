@@ -2,6 +2,7 @@ package com.chronos.hsc.domain
 
 import com.chronos.hsc.data.local.DailyTaskSlice
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.NeuroSessionEntity
 import com.chronos.hsc.data.local.StudyTopicChain
 import java.time.LocalDate
 
@@ -40,4 +41,18 @@ data class SubjectAnalyticsSummary(
 ) {
     val completionFraction: Float
         get() = if (totalSlices <= 0) 0f else (completedSlices.toFloat() / totalSlices.toFloat()).coerceIn(0f, 1f)
+}
+
+data class NeuroTelemetrySummary(
+    val totalFocusLockSeconds: Int = 0,
+    val totalSessionsCompleted: Int = 0,
+    val fastestSchulteSeconds: Double? = null,
+    val highestQuantQpm: Int = 0,
+    val highestNBackAccuracyPercent: Int = 0,
+    val maxChimpMemorySpan: Int = 0,
+    val totalOculomotorResetSeconds: Int = 0,
+    val recentSessions: List<NeuroSessionEntity> = emptyList()
+) {
+    val totalFocusLockMinutes: Int
+        get() = totalFocusLockSeconds / 60
 }

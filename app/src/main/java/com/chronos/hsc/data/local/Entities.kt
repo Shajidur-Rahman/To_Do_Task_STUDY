@@ -88,6 +88,26 @@ data class UserStats(
         get() = (xpIntoCurrentLevel.toFloat() / xpForNextLevel.toFloat()).coerceIn(0f, 1f)
 }
 
+@Entity(tableName = "exam_countdowns")
+data class ExamCountdownEntity(
+    @PrimaryKey
+    val examId: String,
+    val examTitle: String,
+    val targetDateEpochDay: Long,
+    val createdAtEpochDay: Long,
+    val isPrimaryPinned: Boolean = false
+)
+
+@Entity(tableName = "neuro_sessions")
+data class NeuroSessionEntity(
+    @PrimaryKey
+    val sessionId: String,
+    val drillType: NeuroDrillType,
+    val scoreMetric: Double,
+    val durationSeconds: Int,
+    val timestamp: Long
+)
+
 data class TopicChainWithSlices(
     @Embedded
     val chain: StudyTopicChain,

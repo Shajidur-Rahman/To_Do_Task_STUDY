@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.Button
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chronos.hsc.data.local.EnergyLevel
+import com.chronos.hsc.data.local.ExamCountdownEntity
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
@@ -87,6 +89,7 @@ import com.chronos.hsc.ui.components.BossHealthBar
 import com.chronos.hsc.ui.components.CascadeDeleteDialog
 import com.chronos.hsc.ui.components.EbbinghausEchoDialog
 import com.chronos.hsc.ui.components.EffortHeatmapCanvas
+import com.chronos.hsc.ui.components.ExamCountdownModal
 import com.chronos.hsc.ui.components.SwipeToSlashTaskCard
 import com.chronos.hsc.ui.components.TaskRouletteModal
 import com.chronos.hsc.ui.theme.BossShieldPurple
@@ -109,11 +112,13 @@ import com.chronos.hsc.ui.viewmodel.StudyUiState
 import com.chronos.hsc.ui.viewmodel.StudyViewModel
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 private enum class ChronosTab(val label: String) {
     BATTLEGROUND("Battleground"),
     SYLLABUS_BOSSES("Syllabus Bosses"),
-    ANALYTICS("Analytics")
+    ANALYTICS("Analytics"),
+    NEURO_GYM("Neuro-Gym")
 }
 
 @Composable
@@ -145,23 +150,38 @@ fun MainScreen(
         containerColor = ObsidianBackground,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { viewModel.openAddTopicModal() },
-                containerColor = CyberCyan,
-                contentColor = Color(0xFF001F24),
-                icon = {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add Study Topic"
+            if (ChronosTab.entries[selectedTabIndex] != ChronosTab.NEURO_GYM) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Upper Button: Exam Countdown Pill Button
+                    ExamCountdownFloatingButton(
+                        todayEpochDay = state.todayEpochDay,
+                        activeExam = state.pinnedExam,
+                        onClick = { viewModel.openExamCountdownModal() }
                     )
-                },
-                text = {
-                    Text(
-                        text = "Add Study Topic",
-                        fontWeight = FontWeight.ExtraBold
+
+                    // Bottom Button: Existing cyan + Add Study Topic FAB
+                    ExtendedFloatingActionButton(
+                        onClick = { viewModel.openAddTopicModal() },
+                        containerColor = CyberCyan,
+                        contentColor = Color(0xFF001F24),
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Study Topic"
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = "Add Study Topic",
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
                     )
                 }
-            )
+            }
         },
         bottomBar = {
             NavigationBar(
@@ -178,6 +198,7 @@ fun MainScreen(
                                 ChronosTab.BATTLEGROUND -> Icons.Default.Bolt
                                 ChronosTab.SYLLABUS_BOSSES -> Icons.Default.AutoAwesomeMotion
                                 ChronosTab.ANALYTICS -> Icons.Default.Analytics
+                                ChronosTab.NEURO_GYM -> Icons.Default.Psychology
                             }
                             Icon(imageVector = icon, contentDescription = tab.label)
                         },
@@ -213,6 +234,9 @@ fun MainScreen(
                     onExecuteDominoShift = viewModel::executeGlobalDominoShift,
                     onOpenRoulette = viewModel::openTaskRoulette,
                     onOpenAddTopic = viewModel::openAddTopicModal,
+                    onOpenNeuroGymQuickRescue = {
+                        selectedTabIndex = ChronosTab.NEURO_GYM.ordinal
+                    },
                     onIncrementProblem = viewModel::incrementProblemSubCounter,
                     onDecrementProblem = viewModel::decrementProblemSubCounter,
                     onCompleteSlice = viewModel::completeTaskSlice,
@@ -237,6 +261,11 @@ fun MainScreen(
                         viewModel.selectDate(epochDay)
                         selectedTabIndex = 0
                     }
+                )
+
+                ChronosTab.NEURO_GYM -> NeuroGymScreen(
+                    telemetry = state.neuroTelemetry,
+                    onDrillCompleted = viewModel::recordNeuroDrillCompleted
                 )
             }
         }
@@ -283,6 +312,127 @@ fun MainScreen(
                 onConfirm = viewModel::dismissEbbinghausEchoDialog
             )
         }
+
+        // 5. Interactive Exam Countdown Modal
+        if (state.isExamModalOpen) {
+            ExamCountdownModal(
+                todayEpochDay = state.todayEpochDay,
+                pinnedExam = state.pinnedExam,
+                allExams = state.allExams,
+                onDismiss = viewModel::closeExamCountdownModal,
+                onSaveAndPinExam = viewModel::saveAndPinExam,
+                onPinExam = viewModel::pinExam,
+                onDeleteExam = viewModel::deleteExam
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExamCountdownFloatingButton(
+    todayEpochDay: Long,
+    activeExam: ExamCountdownEntity?,
+    onClick: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "examUrgencyPulse")
+    val crimsonPulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 750, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "crimsonPulse"
+    )
+
+    if (activeExam == null) {
+        // Unconfigured State: "⏳ Add Timer Day"
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF121824),
+            border = BorderStroke(
+                width = 1.5.dp,
+                brush = Brush.horizontalGradient(
+                    colors = listOf(CyberMagenta, CyberCyan)
+                )
+            ),
+            shadowElevation = 6.dp,
+            modifier = Modifier.clickable { onClick() }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "⏳",
+                    fontSize = 15.sp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Add Timer Day",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp,
+                    color = CyberCyan
+                )
+            }
+        }
+    } else {
+        // Configured State: Dynamically calculates daysRemaining
+        val daysRemaining = ChronoUnit.DAYS.between(
+            LocalDate.ofEpochDay(todayEpochDay),
+            LocalDate.ofEpochDay(activeExam.targetDateEpochDay)
+        )
+        val primaryLine = when {
+            daysRemaining > 0L -> "⏳ $daysRemaining Days Left"
+            daysRemaining == 0L -> "🎯 EXAM TODAY!"
+            else -> "✅ Completed"
+        }
+
+        // Dynamic Urgency Border & Glow Color:
+        // > 60 days: Neon Cyan (#00E5FF)
+        // 15 to 60 days: Electric Amber (#FFAB00)
+        // < 15 days: Pulsing Crimson Neon (#FF1744)
+        val borderColor = when {
+            daysRemaining > 60L -> CyberCyan
+            daysRemaining in 15L..60L -> CyberAmber
+            else -> CyberCrimson.copy(alpha = crimsonPulseAlpha)
+        }
+        val textColor = when {
+            daysRemaining > 60L -> CyberCyan
+            daysRemaining in 15L..60L -> CyberAmber
+            else -> CyberCrimson
+        }
+
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF121824),
+            border = BorderStroke(width = 1.5.dp, color = borderColor),
+            shadowElevation = 8.dp,
+            modifier = Modifier.clickable { onClick() }
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                Text(
+                    text = primaryLine,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp,
+                    color = TextPrimary
+                )
+                Text(
+                    text = activeExam.examTitle,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -294,6 +444,7 @@ private fun TodayBattlegroundTab(
     onExecuteDominoShift: () -> Unit,
     onOpenRoulette: () -> Unit,
     onOpenAddTopic: () -> Unit,
+    onOpenNeuroGymQuickRescue: () -> Unit,
     onIncrementProblem: (String) -> Unit,
     onDecrementProblem: (String) -> Unit,
     onCompleteSlice: (String) -> Unit,
@@ -305,15 +456,16 @@ private fun TodayBattlegroundTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 140.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. Top Header: Level/XP Bar, Streak Counter & Battery Mode Toggle
+        // 1. Top Header: Level/XP Bar, Streak Counter, Battery Mode Toggle & Neuro-Gym Quick-Rescue Trigger
         item {
             BattlegroundTopHeader(
                 userStats = state.userStats,
                 selectedBatteryMode = state.batteryMode,
-                onSelectBatteryMode = onSelectBatteryMode
+                onSelectBatteryMode = onSelectBatteryMode,
+                onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue
             )
         }
 
@@ -419,7 +571,7 @@ private fun TodayBattlegroundTab(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Create an HSC Science topic chain (Physics, Chemistry, Higher Math, Biology, or ICT) to auto-slice it across 1 to 15 days.",
+                            text = "Create an HSC topic chain (Bangla, English, Physics, Chemistry, Higher Math, Biology, or ICT) to auto-slice it across 1 to 15 days.",
                             fontSize = 12.sp,
                             color = TextSecondary,
                             textAlign = TextAlign.Center
@@ -485,7 +637,8 @@ private fun TodayBattlegroundTab(
 private fun BattlegroundTopHeader(
     userStats: UserStats,
     selectedBatteryMode: EnergyLevel,
-    onSelectBatteryMode: (EnergyLevel) -> Unit
+    onSelectBatteryMode: (EnergyLevel) -> Unit,
+    onOpenNeuroGymQuickRescue: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -635,6 +788,41 @@ private fun BattlegroundTopHeader(
                         maxLines = 1
                     )
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Quick-Rescue Trigger on Battleground: Opens Neuro-Gym directly
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = CyberMagenta.copy(alpha = 0.14f),
+            border = BorderStroke(1.dp, CyberMagenta.copy(alpha = 0.7f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenNeuroGymQuickRescue() }
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🎯 Lost Focus? Run 60s Brain Reset >>",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 11.sp,
+                    color = Color(0xFFF3C6FF)
+                )
+                Text(
+                    text = "NEURO-GYM",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp,
+                    color = CyberCyan
+                )
             }
         }
     }
@@ -1470,7 +1658,7 @@ private fun AnalyticsAndHeatmapTab(
                     color = CyberCyan
                 )
                 Text(
-                    text = "12-Week GitHub weighted effort grid & HSC Science syllabus mastery",
+                    text = "12-Week GitHub weighted effort grid & HSC syllabus mastery",
                     fontSize = 12.sp,
                     color = TextSecondary
                 )

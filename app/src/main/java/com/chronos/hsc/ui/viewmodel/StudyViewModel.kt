@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.chronos.hsc.data.local.ConfidenceRating
 import com.chronos.hsc.data.local.DistributionCurve
 import com.chronos.hsc.data.local.EnergyLevel
+import com.chronos.hsc.data.local.ExamCountdownEntity
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.NeuroDrillType
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
@@ -15,6 +17,7 @@ import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.repository.StudyRepository
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.HeatmapDayCell
+import com.chronos.hsc.domain.NeuroTelemetrySummary
 import com.chronos.hsc.domain.SubjectAnalyticsSummary
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -65,7 +68,11 @@ data class StudyUiState(
     val heatmapCells: List<HeatmapDayCell> = emptyList(),
     val subjectAnalytics: List<SubjectAnalyticsSummary> = emptyList(),
     val upcomingEchoes: List<SliceWithParentChain> = emptyList(),
+    val pinnedExam: ExamCountdownEntity? = null,
+    val allExams: List<ExamCountdownEntity> = emptyList(),
+    val neuroTelemetry: NeuroTelemetrySummary = NeuroTelemetrySummary(),
     val isAddTopicModalOpen: Boolean = false,
+    val isExamModalOpen: Boolean = false,
     val slicePendingDelete: SliceWithParentChain? = null,
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
@@ -75,6 +82,7 @@ data class StudyUiState(
 
 private data class ModalControlState(
     val isAddTopicModalOpen: Boolean = false,
+    val isExamModalOpen: Boolean = false,
     val slicePendingDelete: SliceWithParentChain? = null,
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
@@ -138,11 +146,24 @@ class StudyViewModel(
         )
     }
 
+    private val examAndNeuroFlow = combine(
+        repository.observePinnedExam(),
+        repository.observeAllExams(),
+        repository.observeNeuroTelemetry()
+    ) { pinnedExam, allExams, neuroTelemetry ->
+        ExamAndNeuroData(
+            pinnedExam = pinnedExam,
+            allExams = allExams,
+            neuroTelemetry = neuroTelemetry
+        )
+    }
+
     val uiState: StateFlow<StudyUiState> = combine(
         coreDataFlow,
         analyticsAndChainsFlow,
+        examAndNeuroFlow,
         modalControlFlow
-    ) { core, analytics, modals ->
+    ) { core, analytics, examAndNeuro, modals ->
         val (visible, hidden) = filterAndSortByBatteryMode(
             slices = core.dateSlices,
             batteryMode = core.batteryMode
@@ -161,7 +182,11 @@ class StudyViewModel(
             heatmapCells = analytics.heatmapCells,
             subjectAnalytics = analytics.subjectAnalytics,
             upcomingEchoes = analytics.upcomingEchoes,
+            pinnedExam = examAndNeuro.pinnedExam,
+            allExams = examAndNeuro.allExams,
+            neuroTelemetry = examAndNeuro.neuroTelemetry,
             isAddTopicModalOpen = modals.isAddTopicModalOpen,
+            isExamModalOpen = modals.isExamModalOpen,
             slicePendingDelete = modals.slicePendingDelete,
             chainPendingDelete = modals.chainPendingDelete,
             conqueredChainForEchoDialog = modals.conqueredChainForEchoDialog,
@@ -526,6 +551,70 @@ class StudyViewModel(
         modalControlFlow.update { it.copy(sprintTimerState = null) }
     }
 
+    fun openExamCountdownModal() {
+        modalControlFlow.update { it.copy(isExamModalOpen = true) }
+    }
+
+    fun closeExamCountdownModal() {
+        modalControlFlow.update { it.copy(isExamModalOpen = false) }
+    }
+
+    fun saveAndPinExam(examTitle: String, targetDateEpochDay: Long) {
+        viewModelScope.launch {
+            val saved = repository.saveAndPinExam(
+                examTitle = examTitle,
+                targetDateEpochDay = targetDateEpochDay
+            )
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "Pinned '${saved.examTitle}' countdown to your Exam Timer button!"
+                )
+            )
+        }
+    }
+
+    fun pinExam(examId: String) {
+        viewModelScope.launch {
+            repository.pinExam(examId)
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "Updated pinned countdown on the Exam Timer button!"
+                )
+            )
+        }
+    }
+
+    fun deleteExam(examId: String) {
+        viewModelScope.launch {
+            repository.deleteExam(examId)
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "Removed exam countdown timer."
+                )
+            )
+        }
+    }
+
+    fun recordNeuroDrillCompleted(
+        drillType: NeuroDrillType,
+        scoreMetric: Double,
+        durationSeconds: Int,
+        completionMessage: String
+    ) {
+        viewModelScope.launch {
+            repository.recordCompletedNeuroSession(
+                drillType = drillType,
+                scoreMetric = scoreMetric,
+                durationSeconds = durationSeconds
+            )
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "$completionMessage (+25 XP Earned!)"
+                )
+            )
+        }
+    }
+
     private data class CoreDashboardData(
         val selectedDateEpochDay: Long,
         val batteryMode: EnergyLevel,
@@ -539,6 +628,12 @@ class StudyViewModel(
         val heatmapCells: List<HeatmapDayCell>,
         val subjectAnalytics: List<SubjectAnalyticsSummary>,
         val upcomingEchoes: List<SliceWithParentChain>
+    )
+
+    private data class ExamAndNeuroData(
+        val pinnedExam: ExamCountdownEntity?,
+        val allExams: List<ExamCountdownEntity>,
+        val neuroTelemetry: NeuroTelemetrySummary
     )
 
     companion object {

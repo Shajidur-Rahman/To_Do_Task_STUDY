@@ -31,4 +31,11 @@ class RoomTypeConverters {
     @TypeConverter
     fun toEnergyLevel(value: String?): EnergyLevel? =
         value?.let { runCatching { EnergyLevel.valueOf(it) }.getOrNull() }
+
+    @TypeConverter
+    fun fromNeuroDrillType(drillType: NeuroDrillType): String = drillType.name
+
+    @TypeConverter
+    fun toNeuroDrillType(value: String): NeuroDrillType =
+        runCatching { NeuroDrillType.valueOf(value) }.getOrDefault(NeuroDrillType.FOVEAL_LOCK)
 }
