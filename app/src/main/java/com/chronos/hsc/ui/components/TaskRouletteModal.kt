@@ -1,0 +1,471 @@
+package com.chronos.hsc.ui.components
+
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import com.chronos.hsc.data.local.SliceWithParentChain
+import com.chronos.hsc.ui.theme.CyberAmber
+import com.chronos.hsc.ui.theme.CyberCrimson
+import com.chronos.hsc.ui.theme.CyberCyan
+import com.chronos.hsc.ui.theme.CyberEmerald
+import com.chronos.hsc.ui.theme.CyberMagenta
+import com.chronos.hsc.ui.theme.ObsidianBackground
+import com.chronos.hsc.ui.theme.ObsidianBorder
+import com.chronos.hsc.ui.theme.ObsidianSurface
+import com.chronos.hsc.ui.theme.ObsidianSurfaceElevated
+import com.chronos.hsc.ui.theme.TextMuted
+import com.chronos.hsc.ui.theme.TextPrimary
+import com.chronos.hsc.ui.theme.TextSecondary
+import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.viewmodel.SprintTimerState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.random.Random
+
+@Composable
+fun TaskRouletteModal(
+    incompleteSlices: List<SliceWithParentChain>,
+    sprintTimerState: SprintTimerState?,
+    onDismiss: () -> Unit,
+    onLockedSlice: (SliceWithParentChain) -> Unit,
+    onAcceptAndStartSprint: () -> Unit,
+    onTogglePauseSprint: () -> Unit = {},
+    onCompleteSprintSlice: (String) -> Unit,
+    onStopSprint: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val view = LocalView.current
+
+    var isSpinning by remember { mutableStateOf(false) }
+    var highlightedIndex by remember { mutableIntStateOf(0) }
+    var lockedItem by remember(sprintTimerState?.targetSliceId, incompleteSlices) {
+        mutableStateOf(
+            incompleteSlices.firstOrNull { it.slice.sliceId == sprintTimerState?.targetSliceId }
+        )
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = ObsidianSurface,
+            border = BorderStroke(1.5.dp, CyberMagenta),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Casino,
+                            contentDescription = null,
+                            tint = CyberMagenta
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "TASK ROULETTE ENGINE",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = CyberMagenta
+                            )
+                            Text(
+                                text = "Beat decision paralysis • 2x XP Micro-Sprint",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = TextSecondary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (incompleteSlices.isEmpty() && sprintTimerState == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(ObsidianBackground)
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No incomplete slices on this date yet! Add a study topic chain first to spin the Task Roulette.",
+                            textAlign = TextAlign.Center,
+                            color = CyberCyan,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                } else {
+                    if (incompleteSlices.isNotEmpty()) {
+                        // Slot Wheel List of Candidate Slices
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(ObsidianBackground)
+                                .border(1.dp, ObsidianBorder, RoundedCornerShape(14.dp))
+                                .verticalScroll(rememberScrollState())
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            incompleteSlices.forEachIndexed { idx, candidate ->
+                                val isHighlighted = (isSpinning && highlightedIndex % incompleteSlices.size == idx) ||
+                                    (!isSpinning && lockedItem?.slice?.sliceId == candidate.slice.sliceId)
+                                val sColor = candidate.chain.subject.brandColor()
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isHighlighted) sColor.copy(alpha = 0.24f) else ObsidianSurfaceElevated,
+                                    border = BorderStroke(
+                                        width = if (isHighlighted) 1.8.dp else 1.dp,
+                                        color = if (isHighlighted) CyberAmber else ObsidianBorder
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = candidate.slice.shortBadge,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = sColor,
+                                                fontSize = 11.sp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = candidate.slice.displayTitle,
+                                                fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isHighlighted) TextPrimary else TextSecondary,
+                                                fontSize = 12.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        if (isHighlighted && !isSpinning && lockedItem != null) {
+                                            Text(
+                                                text = "🎯 LOCKED",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 10.sp,
+                                                color = CyberAmber
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+
+                    // Spin Button (when not currently running a 25-min sprint)
+                    if (sprintTimerState?.isSprintRunning != true) {
+                        Button(
+                            onClick = {
+                                if (isSpinning || incompleteSlices.isEmpty()) return@Button
+                                isSpinning = true
+                                lockedItem = null
+                                scope.launch {
+                                    val poolSize = incompleteSlices.size.coerceAtLeast(1)
+                                    val targetWinnerIdx = Random.nextInt(poolSize)
+                                    val minCycles = if (poolSize == 1) 6 else 4
+                                    val totalSteps = (poolSize * minCycles) + targetWinnerIdx
+                                    var delayMs = 45L
+                                    for (step in 0..totalSteps) {
+                                        highlightedIndex = step % poolSize
+                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                        delay(delayMs)
+                                        delayMs = (delayMs * 1.11f).toLong().coerceAtMost(290L)
+                                    }
+                                    val winner = incompleteSlices[targetWinnerIdx]
+                                    lockedItem = winner
+                                    isSpinning = false
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    onLockedSlice(winner)
+                                }
+                            },
+                            enabled = !isSpinning && incompleteSlices.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CyberMagenta,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Casino, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isSpinning) "SPINNING SLOT WHEEL..." else "🎲 SPIN TASK ROULETTE",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+
+                    // 60-Second Acceptance Window OR Active 25-Minute Micro-Sprint Timer
+                    if (sprintTimerState != null) {
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(ObsidianSurfaceElevated)
+                                .border(
+                                    1.5.dp,
+                                    if (sprintTimerState.isSprintRunning) CyberEmerald else CyberAmber,
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .padding(14.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (!sprintTimerState.isSprintRunning) {
+                                    // 60-Second Acceptance Window
+                                    Text(
+                                        text = "⚡ 60s ACCEPTANCE WINDOW FOR 2X XP MULTIPLIER",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 11.sp,
+                                        color = CyberAmber
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = sprintTimerState.targetSliceTitle,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = TextPrimary,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "${sprintTimerState.acceptanceSecondsRemaining}s remaining to claim 2x XP!",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (sprintTimerState.acceptanceSecondsRemaining > 10) CyberCyan else CyberCrimson
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Button(
+                                        onClick = {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                            onAcceptAndStartSprint()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = CyberEmerald,
+                                            contentColor = Color(0xFF00210E)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Accept & Start 25m Sprint (2x XP)",
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+                                } else {
+                                    // Built-in 25-Minute Micro-Sprint Countdown Timer
+                                    val mins = sprintTimerState.sprintSecondsRemaining / 60
+                                    val secs = sprintTimerState.sprintSecondsRemaining % 60
+                                    val timeFormatted = String.format("%02d:%02d", mins, secs)
+                                    val sprintProgress by animateFloatAsState(
+                                        targetValue = 1f - (sprintTimerState.sprintSecondsRemaining.toFloat() / (25f * 60f)),
+                                        animationSpec = tween(300, easing = LinearEasing),
+                                        label = "sprintProgress"
+                                    )
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Bolt,
+                                            contentDescription = null,
+                                            tint = CyberAmber,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (sprintTimerState.isSprintPaused) {
+                                                "MICRO-SPRINT PAUSED • 2X XP"
+                                            } else {
+                                                "MICRO-SPRINT ACTIVE • 2X XP ATTACHED"
+                                            },
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 11.sp,
+                                            color = if (sprintTimerState.isSprintPaused) CyberAmber else CyberEmerald
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Text(
+                                        text = timeFormatted,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 34.sp,
+                                        color = TextPrimary
+                                    )
+
+                                    Text(
+                                        text = sprintTimerState.targetSliceTitle,
+                                        fontSize = 12.sp,
+                                        color = TextSecondary,
+                                        textAlign = TextAlign.Center
+                                    )
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    LinearProgressIndicator(
+                                        progress = { sprintProgress },
+                                        color = if (sprintTimerState.isSprintPaused) CyberAmber else CyberEmerald,
+                                        trackColor = ObsidianBackground,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(8.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                    )
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = onStopSprint,
+                                            border = BorderStroke(1.dp, ObsidianBorder),
+                                            modifier = Modifier.weight(0.9f)
+                                        ) {
+                                            Text("Abort", color = TextMuted, fontSize = 12.sp)
+                                        }
+                                        OutlinedButton(
+                                            onClick = onTogglePauseSprint,
+                                            border = BorderStroke(1.dp, CyberCyan),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (sprintTimerState.isSprintPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                                contentDescription = "Pause/Resume",
+                                                tint = CyberCyan,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (sprintTimerState.isSprintPaused) "Resume" else "Pause",
+                                                color = CyberCyan,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        Button(
+                                            onClick = {
+                                                onCompleteSprintSlice(sprintTimerState.targetSliceId)
+                                                onDismiss()
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = CyberEmerald,
+                                                contentColor = Color(0xFF00210E)
+                                            ),
+                                            modifier = Modifier.weight(1.3f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Done", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

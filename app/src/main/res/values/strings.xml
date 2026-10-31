@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Chronos HSC: Smart Study Engine</string>
+    <string name="widget_description">Track today\'s active HSC chapter slice, Boss HP, and increment problem sub-counters directly from your home screen.</string>
+</resources>
