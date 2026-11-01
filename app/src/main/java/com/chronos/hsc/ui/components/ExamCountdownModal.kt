@@ -43,6 +43,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -482,37 +483,39 @@ fun ExamCountdownModal(
     }
 
     if (isDatePickerOpen) {
-        val initialMillis = LocalDate.ofEpochDay(selectedTargetEpochDay)
-            .atStartOfDay(ZoneOffset.UTC)
-            .toInstant()
-            .toEpochMilli()
-        val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = initialMillis
-        )
-        DatePickerDialog(
-            onDismissRequest = { isDatePickerOpen = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { millis ->
-                            val pickedDate = Instant.ofEpochMilli(millis)
-                                .atZone(ZoneOffset.UTC)
-                                .toLocalDate()
-                            selectedTargetEpochDay = pickedDate.toEpochDay()
+        key(selectedTargetEpochDay) {
+            val initialMillis = LocalDate.ofEpochDay(selectedTargetEpochDay)
+                .atStartOfDay(ZoneOffset.UTC)
+                .toInstant()
+                .toEpochMilli()
+            val datePickerState = rememberDatePickerState(
+                initialSelectedDateMillis = initialMillis
+            )
+            DatePickerDialog(
+                onDismissRequest = { isDatePickerOpen = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { millis ->
+                                val pickedDate = Instant.ofEpochMilli(millis)
+                                    .atZone(ZoneOffset.UTC)
+                                    .toLocalDate()
+                                selectedTargetEpochDay = pickedDate.toEpochDay()
+                            }
+                            isDatePickerOpen = false
                         }
-                        isDatePickerOpen = false
+                    ) {
+                        Text("Confirm Date", color = CyberCyan, fontWeight = FontWeight.Bold)
                     }
-                ) {
-                    Text("Confirm Date", color = CyberCyan, fontWeight = FontWeight.Bold)
+                },
+                dismissButton = {
+                    TextButton(onClick = { isDatePickerOpen = false }) {
+                        Text("Cancel", color = TextSecondary)
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { isDatePickerOpen = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
+            ) {
+                DatePicker(state = datePickerState)
             }
-        ) {
-            DatePicker(state = datePickerState)
         }
     }
 }

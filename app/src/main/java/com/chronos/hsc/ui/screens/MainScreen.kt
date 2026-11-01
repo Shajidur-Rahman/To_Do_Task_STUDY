@@ -79,6 +79,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -1178,11 +1179,22 @@ private fun DateScrubberAndRouletteSection(
             }
         }
 
+        val scrubberScrollState = rememberScrollState()
+        val density = LocalDensity.current
+        LaunchedEffect(todayEpochDay) {
+            val targetIndex = scrubberDays.indexOf(todayEpochDay).coerceAtLeast(0)
+            if (targetIndex > 0) {
+                val itemWidthPx = with(density) { 70.dp.toPx() }
+                val paddingPx = with(density) { 16.dp.toPx() }
+                scrubberScrollState.scrollTo((targetIndex * itemWidthPx - paddingPx).toInt().coerceAtLeast(0))
+            }
+        }
+
         // Horizontal Date Scrubber
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScroll(scrubberScrollState),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             scrubberDays.forEach { dayEpoch ->

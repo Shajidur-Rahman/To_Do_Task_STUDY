@@ -114,7 +114,7 @@ fun SwipeToSlashTaskCard(
     val scope = rememberCoroutineScope()
 
     var cardWidthPx by remember { mutableFloatStateOf(1000f) }
-    val dragAnim = remember(slice.sliceId) { Animatable(0f) }
+    var dragOffsetX by remember(slice.sliceId) { mutableFloatStateOf(0f) }
     val burstProgress = remember(slice.sliceId) { Animatable(0f) }
     var isBursting by remember(slice.sliceId) { mutableStateOf(false) }
 
@@ -157,7 +157,7 @@ fun SwipeToSlashTaskCard(
 
     // Cap threshold at 240.dp equivalent or 30% of card width so tablets don't require huge swipes
     val swipeThresholdPx = (cardWidthPx * 0.28f).coerceIn(160f, 320f)
-    val effectiveDragX = dragAnim.value
+    val effectiveDragX = dragOffsetX
     val slashRatio = (effectiveDragX / swipeThresholdPx).coerceIn(0f, 1.15f)
 
     fun triggerSlashCompletion() {
@@ -271,34 +271,37 @@ fun SwipeToSlashTaskCard(
                         },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
-                            val current = dragAnim.value
+                            val current = dragOffsetX
                             val next = (current + dragAmount).coerceAtLeast(0f)
                             val crossedThresholdNow = current < swipeThresholdPx && next >= swipeThresholdPx
-                            scope.launch {
-                                dragAnim.snapTo(next)
-                            }
+                            dragOffsetX = next
                             if (crossedThresholdNow) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             }
                         },
                         onDragEnd = {
-                            val finalDrag = dragAnim.value
+                            val finalDrag = dragOffsetX
                             scope.launch {
-                                dragAnim.animateTo(
+                                Animatable(finalDrag).animateTo(
                                     targetValue = 0f,
                                     animationSpec = spring(
                                         dampingRatio = Spring.DampingRatioMediumBouncy,
                                         stiffness = Spring.StiffnessMedium
                                     )
-                                )
+                                ) {
+                                    dragOffsetX = value
+                                }
                             }
                             if (finalDrag >= swipeThresholdPx) {
                                 triggerSlashCompletion()
                             }
                         },
                         onDragCancel = {
+                            val finalDrag = dragOffsetX
                             scope.launch {
-                                dragAnim.animateTo(0f)
+                                Animatable(finalDrag).animateTo(0f) {
+                                    dragOffsetX = value
+                                }
                             }
                         }
                     )

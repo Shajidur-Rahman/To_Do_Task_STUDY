@@ -1,9 +1,9 @@
 package com.chronos.hsc.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -22,7 +22,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,23 +80,28 @@ fun BossHealthBar(
     )
 
     // Compute per-segment remaining HP ratio (1.0f = full boss segment, 0.0f = defeated segment)
-    val segmentRatios = (0 until totalSegments).map { index ->
-        val slice = sortedCore.getOrNull(index)
-        val rawRemainingRatio = when {
-            slice == null -> 1f
-            slice.isCompleted -> 0f
-            slice.problemsTarget > 0 -> {
-                // Sub-counter chip damage depletes up to 75% of the segment before final slash
-                (1f - (0.75f * slice.problemProgressFraction)).coerceIn(0.25f, 1f)
+    val targetRatios = remember(sortedCore, totalSegments) {
+        (0 until totalSegments).map { index ->
+            val slice = sortedCore.getOrNull(index)
+            when {
+                slice == null -> 1f
+                slice.isCompleted -> 0f
+                slice.problemsTarget > 0 -> {
+                    // Sub-counter chip damage depletes up to 75% of the segment before final slash
+                    (1f - (0.75f * slice.problemProgressFraction)).coerceIn(0.25f, 1f)
+                }
+                else -> 1f
             }
-            else -> 1f
         }
-        val animatedRatio by animateFloatAsState(
-            targetValue = rawRemainingRatio,
-            animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
-            label = "segmentHp_$index"
-        )
-        animatedRatio
+    }
+
+    var oldRatios by remember { mutableStateOf(targetRatios) }
+    val animProgress = remember { Animatable(1f) }
+
+    LaunchedEffect(targetRatios) {
+        animProgress.snapTo(0f)
+        animProgress.animateTo(1f, tween(durationMillis = 450, easing = FastOutSlowInEasing))
+        oldRatios = targetRatios
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -166,7 +175,10 @@ fun BossHealthBar(
 
             for (i in 0 until totalSegments) {
                 val startX = i * (segmentWidth + gapPx)
-                val remainingRatio = segmentRatios[i]
+                val p = animProgress.value
+                val startVal = oldRatios.getOrElse(i) { targetRatios[i] }
+                val endVal = targetRatios[i]
+                val remainingRatio = startVal + (endVal - startVal) * p
 
                 // Segment empty track
                 drawRoundRect(

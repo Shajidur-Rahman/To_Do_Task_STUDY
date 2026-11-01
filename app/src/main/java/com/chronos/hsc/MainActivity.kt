@@ -15,6 +15,7 @@ import com.chronos.hsc.ui.screens.MainScreen
 import com.chronos.hsc.ui.theme.ChronosHscTheme
 import com.chronos.hsc.ui.viewmodel.StudyViewModel
 import com.chronos.hsc.updater.UpdateManager
+import com.chronos.hsc.updater.UpdateViewModel
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -29,7 +30,8 @@ class MainActivity : ComponentActivity() {
                 val studyViewModel: StudyViewModel = viewModel(
                     factory = StudyViewModel.provideFactory(appContainer.studyRepository)
                 )
-                val updateManager = remember { UpdateManager(applicationContext) }
+                val updateViewModel: UpdateViewModel = viewModel()
+                val updateManager = updateViewModel.updateManager
                 val availableUpdate by updateManager.availableUpdate.collectAsState()
                 val downloadState by updateManager.downloadState.collectAsState()
                 val coroutineScope = rememberCoroutineScope()

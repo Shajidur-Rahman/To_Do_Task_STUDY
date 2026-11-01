@@ -1980,9 +1980,10 @@ private fun SpatialNBackMatrixDrill(
     var misses by remember { mutableIntStateOf(0) }
     var falseAlarms by remember { mutableIntStateOf(0) }
     var correctPasses by remember { mutableIntStateOf(0) }
+    var sessionToken by remember { mutableIntStateOf(0) }
 
     // 2,200ms per step, 900ms active cyan flash
-    LaunchedEffect(isRunning, isCompleted, nLevel) {
+    LaunchedEffect(isRunning, isCompleted, sessionToken) {
         if (!isRunning || isCompleted) return@LaunchedEffect
         while (currentStepIndex < totalSteps && !isCompleted) {
             hasRespondedThisStep = false
@@ -2094,6 +2095,7 @@ private fun SpatialNBackMatrixDrill(
                                 correctPasses = 0
                                 isCompleted = false
                                 isRunning = true
+                                sessionToken++
                             }
                     ) {
                         Box(
@@ -2344,7 +2346,7 @@ private fun ChimpFlashMemoryVaultDrill(
     val haptic = LocalHapticFeedback.current
 
     var currentLevel by remember { mutableIntStateOf(5) }
-    var peakLevelReached by remember { mutableIntStateOf(5) }
+    var peakLevelReached by remember { mutableIntStateOf(0) }
     var livesRemaining by remember { mutableIntStateOf(3) }
     var cellToNumberMap by remember { mutableStateOf(generateChimpBoard(5)) }
     var nextExpectedNumber by remember { mutableIntStateOf(1) }
@@ -2492,7 +2494,6 @@ private fun ChimpFlashMemoryVaultDrill(
                                                 } else {
                                                     val nextLvl = currentLevel + 1
                                                     currentLevel = nextLvl
-                                                    peakLevelReached = maxOf(peakLevelReached, nextLvl)
                                                     cellToNumberMap = generateChimpBoard(nextLvl)
                                                     clearedCells = emptySet()
                                                     nextExpectedNumber = 1
@@ -2621,7 +2622,10 @@ private fun OculomotorFigure8PursuitDrill(
 ) {
     val haptic = LocalHapticFeedback.current
 
-    var elapsedMillis by remember { mutableLongStateOf(0L) }
+    var elapsedMillisForCanvas by remember { mutableLongStateOf(0L) }
+    var secondsLeft by remember { mutableIntStateOf(60) }
+    var currentCycleNumber by remember { mutableIntStateOf(1) }
+    var breathPhase by remember { mutableIntStateOf(0) }
     var isCompleted by remember { mutableStateOf(false) }
     var lastTopUpCycleTriggered by remember { mutableIntStateOf(-1) }
 
@@ -2630,19 +2634,39 @@ private fun OculomotorFigure8PursuitDrill(
     LaunchedEffect(isCompleted) {
         if (isCompleted) return@LaunchedEffect
         val startNs = System.nanoTime()
-        while (elapsedMillis < totalDurationMs && !isCompleted) {
+        while (elapsedMillisForCanvas < totalDurationMs && !isCompleted) {
             delay(16L) // ~60fps smooth pursuit
-            elapsedMillis = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtMost(totalDurationMs)
+            val newElapsed = ((System.nanoTime() - startNs) / 1_000_000L).coerceAtMost(totalDurationMs)
+            elapsedMillisForCanvas = newElapsed
+
+            val newSec = ((totalDurationMs - newElapsed) / 1000L).toInt()
+            if (newSec != secondsLeft) {
+                secondsLeft = newSec
+            }
+
+            val cycleMs = newElapsed % 10_000L
+            val currentCycleIndex = (newElapsed / 10_000L).toInt()
+            val newPhase = when {
+                cycleMs < 2500L -> 0
+                cycleMs < 3500L -> 1
+                else -> 2
+            }
+            if (newPhase != breathPhase) {
+                breathPhase = newPhase
+            }
+
+            val newCycleNum = (currentCycleIndex + 1).coerceIn(1, 6)
+            if (newCycleNum != currentCycleNumber) {
+                currentCycleNumber = newCycleNum
+            }
 
             // Check 10-second Physiological Sigh cycle for the 2.5s double-inhale haptic cue
-            val currentCycleIndex = (elapsedMillis / 10_000L).toInt()
-            val cycleMs = elapsedMillis % 10_000L
-            if (cycleMs in 2_500L..2_750L && lastTopUpCycleTriggered != currentCycleIndex) {
+            if (cycleMs in 2500L..2750L && lastTopUpCycleTriggered != currentCycleIndex) {
                 lastTopUpCycleTriggered = currentCycleIndex
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
 
-            if (elapsedMillis >= totalDurationMs && !isCompleted) {
+            if (newElapsed >= totalDurationMs && !isCompleted) {
                 isCompleted = true
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onComplete()
@@ -2651,40 +2675,12 @@ private fun OculomotorFigure8PursuitDrill(
         }
     }
 
-    // 10-second Physiological Sigh cycle (6 cycles = 60s)
-    val cycleSeconds = (elapsedMillis % 10_000L) / 1000f
-    val (breathInstruction, breathRadiusFraction, breathAccentColor) = when {
-        cycleSeconds < 2.5f -> {
-            // 0.0s - 2.5s: Inhale Nose (80% Lung Fill)
-            val progress = (cycleSeconds / 2.5f).coerceIn(0f, 1f)
-            Triple(
-                "1️⃣ INHALE NOSE (80% LUNG FILL)",
-                0.35f + 0.45f * progress,
-                CyberCyan
-            )
-        }
-        cycleSeconds < 3.5f -> {
-            // 2.5s - 3.5s: Top-Up Second Inhale! (100% Max Fill)
-            val progress = ((cycleSeconds - 2.5f) / 1.0f).coerceIn(0f, 1f)
-            Triple(
-                "2️⃣ TOP-UP SECOND INHALE! (100% MAX FILL)",
-                0.80f + 0.20f * progress,
-                Color(0xFFF3C6FF)
-            )
-        }
-        else -> {
-            // 3.5s - 10.0s: Long Slow Exhale Mouth (Release Tension)
-            val progress = ((cycleSeconds - 3.5f) / 6.5f).coerceIn(0f, 1f)
-            Triple(
-                "3️⃣ LONG SLOW EXHALE MOUTH (RELEASE TENSION)",
-                1.00f - 0.65f * progress,
-                CyberEmerald
-            )
-        }
+    // Discrete phase info for top & bottom HUDs (recomposes only on second/phase transitions)
+    val (breathInstruction, breathAccentColor) = when (breathPhase) {
+        0 -> "1️⃣ INHALE NOSE (80% LUNG FILL)" to CyberCyan
+        1 -> "2️⃣ TOP-UP SECOND INHALE! (100% MAX FILL)" to Color(0xFFF3C6FF)
+        else -> "3️⃣ LONG SLOW EXHALE MOUTH (RELEASE TENSION)" to CyberEmerald
     }
-
-    val secondsLeft = ((totalDurationMs - elapsedMillis) / 1000L).toInt()
-    val currentCycleNumber = ((elapsedMillis / 10_000L).toInt() + 1).coerceIn(1, 6)
 
     Column(
         modifier = Modifier
@@ -2740,16 +2736,33 @@ private fun OculomotorFigure8PursuitDrill(
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val currentElapsed = elapsedMillisForCanvas
+                val cycleSeconds = (currentElapsed % 10_000L) / 1000f
+                val (canvasRadiusFraction, canvasAccentColor) = when {
+                    cycleSeconds < 2.5f -> {
+                        val progress = (cycleSeconds / 2.5f).coerceIn(0f, 1f)
+                        (0.35f + 0.45f * progress) to CyberCyan
+                    }
+                    cycleSeconds < 3.5f -> {
+                        val progress = ((cycleSeconds - 2.5f) / 1.0f).coerceIn(0f, 1f)
+                        (0.80f + 0.20f * progress) to Color(0xFFF3C6FF)
+                    }
+                    else -> {
+                        val progress = ((cycleSeconds - 3.5f) / 6.5f).coerceIn(0f, 1f)
+                        (1.00f - 0.65f * progress) to CyberEmerald
+                    }
+                }
+
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val a = size.width * 0.38f
 
                 // 1. Physiological Sigh Breathing Ring in the center background
                 val maxRingRadius = size.minDimension * 0.36f
-                val currentRingRadius = maxRingRadius * breathRadiusFraction
+                val currentRingRadius = maxRingRadius * canvasRadiusFraction
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            breathAccentColor.copy(alpha = 0.22f),
+                            canvasAccentColor.copy(alpha = 0.22f),
                             Color.Transparent
                         ),
                         center = center,
@@ -2759,7 +2772,7 @@ private fun OculomotorFigure8PursuitDrill(
                     center = center
                 )
                 drawCircle(
-                    color = breathAccentColor.copy(alpha = 0.75f),
+                    color = canvasAccentColor.copy(alpha = 0.75f),
                     radius = currentRingRadius,
                     center = center,
                     style = Stroke(width = 2.5.dp.toPx())
@@ -2788,7 +2801,7 @@ private fun OculomotorFigure8PursuitDrill(
                 )
 
                 // 3. Moving Plasma Orb along the Lemniscate (1 full figure-8 every 6.5 seconds)
-                val t = (elapsedMillis.toDouble() / 6_500.0) * 2.0 * PI
+                val t = (currentElapsed.toDouble() / 6_500.0) * 2.0 * PI
                 val denom = 1.0 + sin(t) * sin(t)
                 val orbX = center.x + (a * cos(t) / denom).toFloat()
                 val orbY = center.y + (a * sin(t) * cos(t) / denom).toFloat()
@@ -2797,7 +2810,7 @@ private fun OculomotorFigure8PursuitDrill(
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            breathAccentColor.copy(alpha = 0.55f),
+                            canvasAccentColor.copy(alpha = 0.55f),
                             Color.Transparent
                         ),
                         center = orbCenter,
@@ -2837,7 +2850,10 @@ private fun OculomotorFigure8PursuitDrill(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(
                             onClick = {
-                                elapsedMillis = 0L
+                                elapsedMillisForCanvas = 0L
+                                secondsLeft = 60
+                                currentCycleNumber = 1
+                                breathPhase = 0
                                 isCompleted = false
                                 lastTopUpCycleTriggered = -1
                             },

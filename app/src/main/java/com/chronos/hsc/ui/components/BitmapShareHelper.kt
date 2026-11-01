@@ -1,5 +1,6 @@
 package com.chronos.hsc.ui.components
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -246,6 +247,7 @@ object BitmapShareHelper {
             putExtra(Intent.EXTRA_STREAM, contentUri)
             putExtra(Intent.EXTRA_SUBJECT, "Chronos HSC Study Progress")
             putExtra(Intent.EXTRA_TEXT, "Conquering the HSC Syllabus with Chronos HSC: Smart Study Engine! ⚔️🔥")
+            clipData = ClipData.newRawUri("Chronos Progress Card", contentUri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
 

@@ -47,6 +47,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -118,36 +119,38 @@ fun AddHscTopicModal(
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
     if (showDatePickerDialog) {
-        val initialMillis = LocalDate.ofEpochDay(startDateEpochDay)
-            .atStartOfDay(ZoneOffset.UTC)
-            .toInstant()
-            .toEpochMilli()
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        key(startDateEpochDay) {
+            val initialMillis = LocalDate.ofEpochDay(startDateEpochDay)
+                .atStartOfDay(ZoneOffset.UTC)
+                .toInstant()
+                .toEpochMilli()
+            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
 
-        DatePickerDialog(
-            onDismissRequest = { showDatePickerDialog = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { millis ->
-                            val pickedDate = Instant.ofEpochMilli(millis)
-                                .atZone(ZoneOffset.UTC)
-                                .toLocalDate()
-                            startDateEpochDay = pickedDate.toEpochDay()
+            DatePickerDialog(
+                onDismissRequest = { showDatePickerDialog = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { millis ->
+                                val pickedDate = Instant.ofEpochMilli(millis)
+                                    .atZone(ZoneOffset.UTC)
+                                    .toLocalDate()
+                                startDateEpochDay = pickedDate.toEpochDay()
+                            }
+                            showDatePickerDialog = false
                         }
-                        showDatePickerDialog = false
+                    ) {
+                        Text("Confirm", color = CyberCyan, fontWeight = FontWeight.Bold)
                     }
-                ) {
-                    Text("Confirm", color = CyberCyan, fontWeight = FontWeight.Bold)
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDatePickerDialog = false }) {
+                        Text("Cancel", color = TextSecondary)
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePickerDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
+            ) {
+                DatePicker(state = datePickerState)
             }
-        ) {
-            DatePicker(state = datePickerState)
         }
     }
 

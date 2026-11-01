@@ -48,6 +48,7 @@ import com.chronos.hsc.ui.theme.ObsidianSurfaceElevated
 import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.TextSecondary
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -56,10 +57,27 @@ fun EffortHeatmapCanvas(
     modifier: Modifier = Modifier
 ) {
     val paddedCells = remember(cells) {
-        if (cells.size >= 84) cells.takeLast(84) else cells
+        if (cells.size >= 84) {
+            cells.takeLast(84)
+        } else {
+            val missing = 84 - cells.size
+            val firstDate = cells.firstOrNull()?.date ?: LocalDate.now()
+            val dummyList = (missing downTo 1).map { offset ->
+                val d = firstDate.minusDays(offset.toLong())
+                HeatmapDayCell(
+                    date = d,
+                    epochDay = d.toEpochDay(),
+                    completedSlicesCount = 0,
+                    problemsSolvedCount = 0,
+                    weightedScore = 0,
+                    intensityLevel = 0
+                )
+            }
+            dummyList + cells
+        }
     }
-    var selectedCell by remember(paddedCells) {
-        mutableStateOf(paddedCells.lastOrNull())
+    var selectedCell by remember(cells, paddedCells) {
+        mutableStateOf(cells.lastOrNull() ?: paddedCells.lastOrNull())
     }
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
