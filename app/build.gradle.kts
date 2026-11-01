@@ -32,8 +32,8 @@ android {
         applicationId = "com.chronos.hsc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.2.1"
+        versionCode = 6
+        versionName = "1.2.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -118,44 +118,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 }
 
-tasks.register("buildAutoUpdateRelease") {
+tasks.register("copyReleaseApk") {
     group = "distribution"
-    description = "Increments versionCode, syncs version.json, builds signed release APK, and copies to release/ and project root."
-
-    doFirst {
-        val buildGradleFile = file("build.gradle.kts")
-        val buildGradleText = buildGradleFile.readText()
-
-        val versionCodeRegex = Regex("""versionCode\s*=\s*(\d+)""")
-        val versionNameRegex = Regex("""versionName\s*=\s*"([^"]+)"""")
-
-        val currentVersionCode = versionCodeRegex.find(buildGradleText)?.groupValues?.get(1)?.toInt() ?: 1
-        val currentVersionName = versionNameRegex.find(buildGradleText)?.groupValues?.get(1) ?: "1.0.0"
-
-        val newVersionCode = currentVersionCode + 1
-        val versionParts = currentVersionName.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
-        while (versionParts.size < 3) versionParts.add(0)
-        versionParts[2] = versionParts[2] + 1
-        val newVersionName = versionParts.joinToString(".")
-
-        val updatedBuildGradleText = buildGradleText
-            .replaceFirst(versionCodeRegex, "versionCode = $newVersionCode")
-            .replaceFirst(versionNameRegex, """versionName = "$newVersionName"""")
-
-        buildGradleFile.writeText(updatedBuildGradleText)
-        println("🚀 BUMPED: versionCode=$newVersionCode, versionName=$newVersionName")
-
-        val versionJsonFile = rootProject.file("version.json")
-        val newJsonContent = """{
-  "versionCode": $newVersionCode,
-  "versionName": "$newVersionName",
-  "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk",
-  "releaseNotes": "Version $newVersionName build $newVersionCode with latest feature upgrades and performance optimizations."
-}"""
-        versionJsonFile.writeText(newJsonContent)
-        println("📝 UPDATED: version.json (versionCode=$newVersionCode, versionName=$newVersionName)")
-    }
-
+    description = "Copies signed release APK to release/ and project root mirror."
     dependsOn("assembleRelease")
 
     doLast {

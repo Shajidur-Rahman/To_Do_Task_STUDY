@@ -28,6 +28,69 @@ abstract class StudyDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: StudyDatabase? = null
 
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `study_topic_chains` (
+                        `chainId` TEXT NOT NULL,
+                        `subject` TEXT NOT NULL,
+                        `paper` TEXT NOT NULL,
+                        `chapterNumber` INTEGER NOT NULL,
+                        `chapterName` TEXT NOT NULL,
+                        `totalDays` INTEGER NOT NULL,
+                        `distributionCurve` TEXT NOT NULL,
+                        `energyLevel` TEXT NOT NULL,
+                        `dailyProblemTarget` INTEGER NOT NULL,
+                        `createdAtEpochDay` INTEGER NOT NULL,
+                        `bossMaxHp` INTEGER NOT NULL,
+                        `bossBonusShieldHp` INTEGER NOT NULL DEFAULT 0,
+                        `isChainCompleted` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`chainId`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `daily_task_slices` (
+                        `sliceId` TEXT NOT NULL,
+                        `chainId` TEXT NOT NULL,
+                        `sliceNumber` INTEGER NOT NULL,
+                        `totalSlicesInChain` INTEGER NOT NULL,
+                        `displayTitle` TEXT NOT NULL,
+                        `shortBadge` TEXT NOT NULL,
+                        `phaseTag` TEXT NOT NULL,
+                        `scheduledDateEpochDay` INTEGER NOT NULL,
+                        `problemsCompleted` INTEGER NOT NULL DEFAULT 0,
+                        `problemsTarget` INTEGER NOT NULL DEFAULT 5,
+                        `isCompleted` INTEGER NOT NULL DEFAULT 0,
+                        `completedAtTimestamp` INTEGER,
+                        `isRetentionEcho` INTEGER NOT NULL DEFAULT 0,
+                        `echoIntervalDays` INTEGER,
+                        `sliceEnergyOverride` TEXT,
+                        `xpMultiplier` INTEGER NOT NULL DEFAULT 1,
+                        PRIMARY KEY(`sliceId`),
+                        FOREIGN KEY(`chainId`) REFERENCES `study_topic_chains`(`chainId`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_task_slices_chainId` ON `daily_task_slices` (`chainId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_daily_task_slices_scheduledDateEpochDay` ON `daily_task_slices` (`scheduledDateEpochDay`)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `user_stats` (
+                        `id` INTEGER NOT NULL,
+                        `totalXp` INTEGER NOT NULL,
+                        `currentLevel` INTEGER NOT NULL,
+                        `streakDays` INTEGER NOT NULL,
+                        `lastStudyEpochDay` INTEGER,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -57,6 +120,13 @@ abstract class StudyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_1_3 = object : Migration(1, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_1_2.migrate(db)
+                MIGRATION_2_3.migrate(db)
+            }
+        }
+
         fun getInstance(context: Context): StudyDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -64,7 +134,7 @@ abstract class StudyDatabase : RoomDatabase() {
                     StudyDatabase::class.java,
                     "chronos_hsc_study_engine.db"
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

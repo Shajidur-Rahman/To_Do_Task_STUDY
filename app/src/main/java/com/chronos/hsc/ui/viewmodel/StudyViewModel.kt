@@ -679,12 +679,12 @@ class StudyViewModel(
 
     fun toggleMorningBriefing(context: Context, enabled: Boolean) {
         modalControlFlow.update { it.copy(morningBriefingEnabled = enabled) }
-        ChronosWorkScheduler.scheduleDailyBriefing(context, enabled)
+        ChronosWorkScheduler.scheduleDailyBriefing(context, enabled, forceUpdate = true)
     }
 
     fun toggleDominoAlerts(context: Context, enabled: Boolean) {
         modalControlFlow.update { it.copy(dominoAlertsEnabled = enabled) }
-        ChronosWorkScheduler.scheduleDominoAlerts(context, enabled)
+        ChronosWorkScheduler.scheduleDominoAlerts(context, enabled, forceUpdate = true)
     }
 
     private data class CoreDashboardData(

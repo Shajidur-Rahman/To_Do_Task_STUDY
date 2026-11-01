@@ -14,7 +14,7 @@ object ChronosWorkScheduler {
     private const val WORK_MORNING_BRIEFING = "chronos_work_morning_briefing"
     private const val WORK_DOMINO_ALERT = "chronos_work_domino_alert"
 
-    fun scheduleDailyBriefing(context: Context, enabled: Boolean) {
+    fun scheduleDailyBriefing(context: Context, enabled: Boolean, forceUpdate: Boolean = false) {
         val workManager = WorkManager.getInstance(context)
         if (!enabled) {
             workManager.cancelUniqueWork(WORK_MORNING_BRIEFING)
@@ -28,12 +28,12 @@ object ChronosWorkScheduler {
 
         workManager.enqueueUniquePeriodicWork(
             WORK_MORNING_BRIEFING,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            if (forceUpdate) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP,
             request
         )
     }
 
-    fun scheduleDominoAlerts(context: Context, enabled: Boolean) {
+    fun scheduleDominoAlerts(context: Context, enabled: Boolean, forceUpdate: Boolean = false) {
         val workManager = WorkManager.getInstance(context)
         if (!enabled) {
             workManager.cancelUniqueWork(WORK_DOMINO_ALERT)
@@ -47,7 +47,7 @@ object ChronosWorkScheduler {
 
         workManager.enqueueUniquePeriodicWork(
             WORK_DOMINO_ALERT,
-            ExistingPeriodicWorkPolicy.UPDATE,
+            if (forceUpdate) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP,
             request
         )
     }
