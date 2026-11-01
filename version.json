@@ -1,6 +1,6 @@
 {
-  "versionCode": 4,
-  "versionName": "1.0.3",
+  "versionCode": 5,
+  "versionName": "1.2.1",
   "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk",
-  "releaseNotes": "Chronos HSC v1.0.3: Complete stability & performance patch. Fixes in-app update storage fallback, restores social card image sharing across apps, eliminates coroutine churn and 60fps recomposition storms, fixes Chimp Memory peak scoring, guarantees date picker sync, and anchors date scrubber and activity heatmap."
+  "releaseNotes": "Chronos HSC v1.2.1: Critical signature unification patch. Restores original certificate to eliminate package conflicts, plus stability fixes for auto-updater, progress card sharing, and Neuro-Gym performance."
 }
