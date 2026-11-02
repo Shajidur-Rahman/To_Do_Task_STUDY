@@ -9,6 +9,7 @@ import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.ExamCountdownEntity
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.NeuroDrillType
 import com.chronos.hsc.data.local.NeuroSessionEntity
 import com.chronos.hsc.data.local.SliceWithParentChain
@@ -234,7 +235,9 @@ class StudyRepository(
         val effectivePaper = if (subject.isSinglePaperOnly) HscPaper.SINGLE else paper
         val safeTotalDays = totalDays.coerceIn(1, 15)
         val safeChapterNo = chapterNumber.coerceIn(1, 15)
-        val cleanChapterName = chapterName.trim()
+        val cleanChapterName = chapterName.trim().ifEmpty {
+            HscSyllabusCatalog.getChapterNameBangla(subject, effectivePaper, safeChapterNo)
+        }
         val chainId = UUID.randomUUID().toString()
         val bossMaxHp = safeTotalDays * 100
 
@@ -613,7 +616,10 @@ class StudyRepository(
         } else {
             "${parent.subject.fullName} ${parent.paper.compactTitleLabel}"
         }
-        val suffixTopic = if (parent.chapterName.isNotBlank()) ": ${parent.chapterName}" else ""
+        val resolvedTopic = parent.chapterName.trim().ifEmpty {
+            HscSyllabusCatalog.getChapterNameBangla(parent.subject, parent.paper, parent.chapterNumber)
+        }
+        val bnCh = HscSyllabusCatalog.toBanglaDigits(parent.chapterNumber)
 
         val echoes = confidenceRating.intervalsInDays.mapIndexed { index, intervalDays ->
             DailyTaskSlice(
@@ -621,7 +627,7 @@ class StudyRepository(
                 chainId = parent.chainId,
                 sliceNumber = parent.totalDays + index + 1,
                 totalSlicesInChain = parent.totalDays,
-                displayTitle = "$paperPrefix - Ch ${parent.chapterNumber} Echo (+${intervalDays}d)$suffixTopic",
+                displayTitle = "$paperPrefix • অধ্যায় $bnCh: $resolvedTopic (Echo +${intervalDays}d)",
                 shortBadge = "${parent.subject.shortCode}${parent.paper.shortCode} Ch ${parent.chapterNumber} ⟳+${intervalDays}d",
                 phaseTag = "Retention Echo (+${intervalDays}d • 15m)",
                 scheduledDateEpochDay = fromEpochDay + intervalDays.toLong(),
@@ -779,12 +785,12 @@ class StudyRepository(
             } else {
                 "${subject.fullName} ${paper.compactTitleLabel}"
             }
-            val cleanTopic = chapterName.trim()
-            return if (cleanTopic.isNotEmpty()) {
-                "$subjectAndPaper - Chapter $chapterNumber-$sliceNumber: $cleanTopic"
-            } else {
-                "$subjectAndPaper - Chapter $chapterNumber-$sliceNumber"
+            val cleanTopic = chapterName.trim().ifEmpty {
+                HscSyllabusCatalog.getChapterNameBangla(subject, paper, chapterNumber)
             }
+            val bnCh = HscSyllabusCatalog.toBanglaDigits(chapterNumber)
+            val bnSlice = HscSyllabusCatalog.toBanglaDigits(sliceNumber)
+            return "$subjectAndPaper • অধ্যায় $bnCh ($bnSlice): $cleanTopic"
         }
 
         fun formatShortBadge(

@@ -65,6 +65,7 @@ import com.chronos.hsc.data.local.DistributionCurve
 import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.repository.StudyRepository
 import com.chronos.hsc.ui.theme.CyberCyan
 import com.chronos.hsc.ui.theme.CyberEmerald
@@ -104,7 +105,15 @@ fun AddHscTopicModal(
     var selectedSubject by remember { mutableStateOf(HscSubject.PHYSICS) }
     var selectedPaper by remember { mutableStateOf(HscPaper.FIRST_PAPER) }
     var selectedChapterNumber by remember { mutableIntStateOf(1) }
-    var chapterTitle by remember { mutableStateOf("") }
+    var chapterTitle by remember {
+        mutableStateOf(
+            HscSyllabusCatalog.getChapterNameBangla(
+                HscSubject.PHYSICS,
+                HscPaper.FIRST_PAPER,
+                1
+            )
+        )
+    }
     var selectedDays by remember { mutableIntStateOf(4) }
     var isDaysDropdownExpanded by remember { mutableStateOf(false) }
     var isChapterDropdownExpanded by remember { mutableStateOf(false) }
@@ -115,6 +124,9 @@ fun AddHscTopicModal(
     var selectedEnergy by remember { mutableStateOf(EnergyLevel.HIGH_FOCUS) }
 
     val effectivePaper = if (selectedSubject.isSinglePaperOnly) HscPaper.SINGLE else selectedPaper
+    val availableChapters = remember(selectedSubject, effectivePaper) {
+        HscSyllabusCatalog.getChaptersFor(selectedSubject, effectivePaper)
+    }
     val subjectColor = selectedSubject.brandColor()
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
@@ -217,11 +229,21 @@ fun AddHscTopicModal(
                         ),
                         modifier = Modifier.clickable {
                             selectedSubject = subject
-                            if (subject.isSinglePaperOnly) {
-                                selectedPaper = HscPaper.SINGLE
-                            } else if (selectedPaper == HscPaper.SINGLE) {
-                                selectedPaper = HscPaper.FIRST_PAPER
+                            val nextPaper = when {
+                                subject.isSinglePaperOnly -> HscPaper.SINGLE
+                                selectedPaper == HscPaper.SINGLE -> HscPaper.FIRST_PAPER
+                                else -> selectedPaper
                             }
+                            selectedPaper = nextPaper
+                            val nextChapters = HscSyllabusCatalog.getChaptersFor(subject, nextPaper)
+                            if (selectedChapterNumber > nextChapters.size) {
+                                selectedChapterNumber = 1
+                            }
+                            chapterTitle = HscSyllabusCatalog.getChapterNameBangla(
+                                subject,
+                                nextPaper,
+                                selectedChapterNumber
+                            )
                         }
                     ) {
                         Row(
@@ -283,7 +305,18 @@ fun AddHscTopicModal(
                             ),
                             modifier = Modifier
                                 .weight(1f)
-                                .clickable { selectedPaper = paper }
+                                .clickable {
+                                    selectedPaper = paper
+                                    val nextChapters = HscSyllabusCatalog.getChaptersFor(selectedSubject, paper)
+                                    if (selectedChapterNumber > nextChapters.size) {
+                                        selectedChapterNumber = 1
+                                    }
+                                    chapterTitle = HscSyllabusCatalog.getChapterNameBangla(
+                                        selectedSubject,
+                                        paper,
+                                        selectedChapterNumber
+                                    )
+                                }
                         ) {
                             Box(
                                 modifier = Modifier.padding(vertical = 10.dp),
@@ -303,116 +336,121 @@ fun AddHscTopicModal(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 3. Chapter Number & Days to Continue Dropdowns
-            SectionLabel("3. CHAPTER NUMBER & DAYS TO CONTINUE")
+            // 3. Exact HSC Chapter (in Bangla) & Days to Continue Dropdowns
+            SectionLabel("3. HSC CHAPTER (বাংলা) & DAYS TO CONTINUE")
             Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Chapter Number Dropdown (1..15)
-                ExposedDropdownMenuBox(
-                    expanded = isChapterDropdownExpanded,
-                    onExpandedChange = { isChapterDropdownExpanded = it },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = "Chapter $selectedChapterNumber",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Chapter No.") },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isChapterDropdownExpanded)
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = subjectColor,
-                            unfocusedBorderColor = ObsidianBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        modifier = Modifier
-                            .menuAnchor()
-                            .fillMaxWidth()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = isChapterDropdownExpanded,
-                        onDismissRequest = { isChapterDropdownExpanded = false },
-                        modifier = Modifier.background(ObsidianSurfaceElevated)
-                    ) {
-                        (1..15).forEach { chNum ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = "Chapter $chNum",
-                                        color = if (chNum == selectedChapterNumber) subjectColor else TextPrimary,
-                                        fontWeight = if (chNum == selectedChapterNumber) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                onClick = {
-                                    selectedChapterNumber = chNum
-                                    isChapterDropdownExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
 
-                // Days to Continue Dropdown (1..15 Days)
-                ExposedDropdownMenuBox(
-                    expanded = isDaysDropdownExpanded,
-                    onExpandedChange = { isDaysDropdownExpanded = it },
-                    modifier = Modifier.weight(1f)
+            // Full-width HSC Chapter Dropdown showing exact Bangla chapter names
+            ExposedDropdownMenuBox(
+                expanded = isChapterDropdownExpanded,
+                onExpandedChange = { isChapterDropdownExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = HscSyllabusCatalog.getDropdownChapterLabel(
+                        selectedSubject,
+                        effectivePaper,
+                        selectedChapterNumber
+                    ),
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("HSC অধ্যায় নির্বাচন করুন (Select Chapter)") },
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = isChapterDropdownExpanded)
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = subjectColor,
+                        unfocusedBorderColor = ObsidianBorder,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = isChapterDropdownExpanded,
+                    onDismissRequest = { isChapterDropdownExpanded = false },
+                    modifier = Modifier.background(ObsidianSurfaceElevated)
                 ) {
-                    OutlinedTextField(
-                        value = if (selectedDays == 1) "1 Day (1 Slice)" else "$selectedDays Days ($selectedDays Slices)",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Days to Continue") },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDaysDropdownExpanded)
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CyberCyan,
-                            unfocusedBorderColor = ObsidianBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        modifier = Modifier
-                            .menuAnchor()
-                            .fillMaxWidth()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = isDaysDropdownExpanded,
-                        onDismissRequest = { isDaysDropdownExpanded = false },
-                        modifier = Modifier.background(ObsidianSurfaceElevated)
-                    ) {
-                        (1..15).forEach { days ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = if (days == 1) "1 Day (Single Slice)" else "$days Days ($days Daily Slices • ${days * 100} HP)",
-                                        color = if (days == selectedDays) CyberCyan else TextPrimary,
-                                        fontWeight = if (days == selectedDays) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
-                                onClick = {
-                                    selectedDays = days
-                                    isDaysDropdownExpanded = false
-                                }
-                            )
-                        }
+                    availableChapters.forEachIndexed { idx, banglaName ->
+                        val chNum = idx + 1
+                        val label = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chNum)}: $banglaName"
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = label,
+                                    color = if (chNum == selectedChapterNumber) subjectColor else TextPrimary,
+                                    fontWeight = if (chNum == selectedChapterNumber) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                selectedChapterNumber = chNum
+                                chapterTitle = banglaName
+                                isChapterDropdownExpanded = false
+                            }
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Chapter Topic Name Input
+            // Days to Continue Dropdown (1..15 Days)
+            ExposedDropdownMenuBox(
+                expanded = isDaysDropdownExpanded,
+                onExpandedChange = { isDaysDropdownExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = if (selectedDays == 1) "1 Day (1 Slice)" else "$selectedDays Days ($selectedDays Slices)",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Days to Continue") },
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDaysDropdownExpanded)
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = ObsidianBorder,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = isDaysDropdownExpanded,
+                    onDismissRequest = { isDaysDropdownExpanded = false },
+                    modifier = Modifier.background(ObsidianSurfaceElevated)
+                ) {
+                    (1..15).forEach { days ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (days == 1) "1 Day (Single Slice)" else "$days Days ($days Daily Slices • ${days * 100} HP)",
+                                    color = if (days == selectedDays) CyberCyan else TextPrimary,
+                                    fontWeight = if (days == selectedDays) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            onClick = {
+                                selectedDays = days
+                                isDaysDropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Chapter Topic Name Input (Auto-populated with Bangla chapter name, editable)
             OutlinedTextField(
                 value = chapterTitle,
                 onValueChange = { chapterTitle = it },
-                label = { Text("Chapter Title / Topic Name (Optional)") },
-                placeholder = { Text("e.g., Oparichita, Modifiers, Vector, Organic Chemistry") },
+                label = { Text("অধ্যায়ের নাম / নির্দিষ্ট টপিক (Chapter Title in Bangla)") },
+                placeholder = { Text("যেমন: ভৌত জগৎ ও পরিমাপ, ভেক্টর, জৈব রসায়ন...") },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = subjectColor,

@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.ExamCountdownEntity
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
@@ -1328,8 +1329,15 @@ private fun ActiveBossesMiniCarousel(
                                 color = TextSecondary
                             )
                         }
+                        val banglaBossChapter = chain.chapterName.trim().ifEmpty {
+                            HscSyllabusCatalog.getChapterNameBangla(
+                                chain.subject,
+                                chain.paper,
+                                chain.chapterNumber
+                            )
+                        }
                         Text(
-                            text = chain.chapterName.ifBlank { "Chapter ${chain.chapterNumber}" },
+                            text = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}: $banglaBossChapter",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             color = TextPrimary,
@@ -1540,11 +1548,14 @@ private fun ActiveChainsTab(
             ) { item ->
                 val chain = item.chain
                 val subjectColor = chain.subject.brandColor()
-                val chapterHeading = if (chain.chapterName.isNotBlank()) {
-                    "Chapter ${chain.chapterNumber}: ${chain.chapterName}"
-                } else {
-                    "Chapter ${chain.chapterNumber}"
+                val resolvedBanglaName = chain.chapterName.trim().ifEmpty {
+                    HscSyllabusCatalog.getChapterNameBangla(
+                        chain.subject,
+                        chain.paper,
+                        chain.chapterNumber
+                    )
                 }
+                val chapterHeading = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}: $resolvedBanglaName"
 
                 Surface(
                     shape = RoundedCornerShape(18.dp),

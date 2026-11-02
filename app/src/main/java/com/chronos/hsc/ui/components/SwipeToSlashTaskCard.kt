@@ -69,6 +69,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chronos.hsc.data.local.EnergyLevel
+import com.chronos.hsc.data.local.HscPaper
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.ui.theme.CyberAmber
 import com.chronos.hsc.ui.theme.CyberCrimson
@@ -423,9 +425,29 @@ fun SwipeToSlashTaskCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // 3. Task Slice Title + Energy Indicator
+                // 3. Task Slice Title (Full Bangla Chapter Name) + Energy Indicator
+                val banglaChapterName = chain.chapterName.trim().ifEmpty {
+                    HscSyllabusCatalog.getChapterNameBangla(
+                        chain.subject,
+                        chain.paper,
+                        chain.chapterNumber
+                    )
+                }
+                val bnCh = HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)
+                val bnSlice = HscSyllabusCatalog.toBanglaDigits(slice.sliceNumber)
+                val paperLabel = if (chain.subject.isSinglePaperOnly || chain.paper == HscPaper.SINGLE) {
+                    chain.subject.fullName
+                } else {
+                    "${chain.subject.fullName} ${chain.paper.compactTitleLabel}"
+                }
+                val resolvedCardTitle = if (slice.isRetentionEcho) {
+                    "$paperLabel • অধ্যায় $bnCh: $banglaChapterName (Echo +${slice.echoIntervalDays ?: 3}d)"
+                } else {
+                    "$paperLabel • অধ্যায় $bnCh ($bnSlice): $banglaChapterName"
+                }
+
                 Text(
-                    text = slice.displayTitle,
+                    text = resolvedCardTitle,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (slice.isCompleted) TextMuted else TextPrimary,
