@@ -362,7 +362,9 @@ fun SwipeToSlashTaskCard(
                                 color = TextPrimary,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
 
@@ -401,7 +403,9 @@ fun SwipeToSlashTaskCard(
                                 color = CyberAmber,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 10.sp
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     } else if (isReadyToSlash) {
@@ -417,7 +421,9 @@ fun SwipeToSlashTaskCard(
                                 color = CyberEmerald,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 10.sp
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -451,7 +457,9 @@ fun SwipeToSlashTaskCard(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (slice.isCompleted) TextMuted else TextPrimary,
-                    textDecoration = if (slice.isCompleted) TextDecoration.LineThrough else TextDecoration.None
+                    textDecoration = if (slice.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -468,7 +476,9 @@ fun SwipeToSlashTaskCard(
                         "Slice ${slice.sliceNumber} of ${slice.totalSlicesInChain} • $energyEmoji"
                     },
                     fontSize = 11.sp,
-                    color = TextSecondary
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -481,7 +491,8 @@ fun SwipeToSlashTaskCard(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         // Interactive Sub-Counter Micro-Chip: [ - 2 / 5 Problems + ]
                         if (slice.problemsTarget > 0) {
@@ -529,7 +540,9 @@ fun SwipeToSlashTaskCard(
                                             fontSize = 11.sp,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isTargetReached) CyberEmerald else TextPrimary
+                                            color = if (isTargetReached) CyberEmerald else TextPrimary,
+                                            maxLines = 1,
+                                            softWrap = false
                                         )
                                         if (!slice.isCompleted && !isTargetReached) {
                                             Spacer(modifier = Modifier.width(4.dp))
@@ -573,7 +586,9 @@ fun SwipeToSlashTaskCard(
                                         text = if (isReadyToSlash) "Slash!" else "Slash",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isReadyToSlash) Color(0xFF00210E) else CyberCyan
+                                        color = if (isReadyToSlash) Color(0xFF00210E) else CyberCyan,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
@@ -589,7 +604,9 @@ fun SwipeToSlashTaskCard(
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
-                                    color = CyberEmerald
+                                    color = CyberEmerald,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -624,7 +641,9 @@ fun SwipeToSlashTaskCard(
                                         fontSize = 10.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = CyberAmber
+                                        color = CyberAmber,
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }

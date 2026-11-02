@@ -110,13 +110,22 @@ fun BossHealthBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
-                    text = if (chain.isChainCompleted) "⚔️ BOSS SLAIN" else "👹 CHAPTER BOSS HP",
+                    text = when {
+                        chain.isChainCompleted -> "⚔️ BOSS SLAIN"
+                        compact && hasPurpleShield -> "👹 BOSS HP"
+                        else -> "👹 CHAPTER BOSS HP"
+                    },
                     fontSize = if (compact) 10.sp else 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (chain.isChainCompleted) CyberEmerald else CyberCrimson
+                    color = if (chain.isChainCompleted) CyberEmerald else CyberCrimson,
+                    maxLines = 1,
+                    softWrap = false
                 )
                 if (hasPurpleShield) {
                     Spacer(modifier = Modifier.width(6.dp))
@@ -132,26 +141,32 @@ fun BossHealthBar(
                             .padding(horizontal = 5.dp, vertical = 1.dp)
                     ) {
                         Text(
-                            text = "🛡️ +${chain.bossBonusShieldHp} OVERDUE SHIELD",
+                            text = if (compact) "🛡️ +${chain.bossBonusShieldHp}" else "🛡️ +${chain.bossBonusShieldHp} SHIELD",
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFEA80FC)
+                            color = Color(0xFFEA80FC),
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
             }
 
+            Spacer(modifier = Modifier.width(6.dp))
+
             Text(
-                text = if (hasPurpleShield) {
-                    "$currentBossHp + ${chain.bossBonusShieldHp} / ${chain.bossMaxHp} HP"
-                } else {
-                    "$currentBossHp / ${chain.bossMaxHp} HP"
+                text = when {
+                    hasPurpleShield && compact -> "$currentBossHp/${chain.bossMaxHp} (+${chain.bossBonusShieldHp})"
+                    hasPurpleShield -> "$currentBossHp + ${chain.bossBonusShieldHp} / ${chain.bossMaxHp} HP"
+                    else -> "$currentBossHp / ${chain.bossMaxHp} HP"
                 },
                 fontSize = if (compact) 10.sp else 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                color = if (currentBossHp == 0) CyberEmerald else TextPrimary
+                color = if (currentBossHp == 0) CyberEmerald else TextPrimary,
+                maxLines = 1,
+                softWrap = false
             )
         }
 

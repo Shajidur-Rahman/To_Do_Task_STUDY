@@ -446,6 +446,7 @@ class StudyRepository(
             }
         }
 
+        syncOverdueBossShields(todayEpochDay)
         ChronosWidgetUpdater.requestUpdate(appContext)
         return DominoShiftResult(
             shiftedChainsCount = affectedChainIds.size,
@@ -463,6 +464,7 @@ class StudyRepository(
             dao.updateSlice(
                 targetSlice.copy(scheduledDateEpochDay = targetSlice.scheduledDateEpochDay + 1L)
             )
+            syncOverdueBossShields(LocalDate.now().toEpochDay())
             ChronosWidgetUpdater.requestUpdate(appContext)
             return 1
         }
@@ -477,6 +479,7 @@ class StudyRepository(
             slice.copy(scheduledDateEpochDay = slice.scheduledDateEpochDay + 1L)
         }
         dao.updateSlices(updated)
+        syncOverdueBossShields(LocalDate.now().toEpochDay())
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updated.size
     }
@@ -484,8 +487,7 @@ class StudyRepository(
     /**
      * Overdue Boss Heal:
      * If any slice in a chain is overdue (scheduledDateEpochDay < todayEpochDay and not completed),
-     * adds a +10% Purple Shield per overdue slice to the Boss Bar that only breaks once the user
-     * completes a shifted/overdue slice.
+     * adds a +10% Purple Shield per overdue slice to the Boss Bar, and resets to 0 once shifted or cleared.
      */
     suspend fun syncOverdueBossShields(todayEpochDay: Long) {
         val overdueSlices = dao.getOverdueIncompleteSlicesOnce(todayEpochDay)
@@ -498,9 +500,11 @@ class StudyRepository(
                 val requiredShield = (chain.bossMaxHp * 0.10f * overdueCount)
                     .roundToInt()
                     .coerceAtLeast(chain.bossMaxHp / 10)
-                if (chain.bossBonusShieldHp < requiredShield) {
+                if (chain.bossBonusShieldHp != requiredShield) {
                     dao.updateChain(chain.copy(bossBonusShieldHp = requiredShield))
                 }
+            } else if (chain.bossBonusShieldHp != 0) {
+                dao.updateChain(chain.copy(bossBonusShieldHp = 0))
             }
         }
     }
