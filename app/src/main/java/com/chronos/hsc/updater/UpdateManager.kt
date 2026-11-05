@@ -24,6 +24,9 @@ class UpdateManager(private val context: Context) {
     private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
     val availableUpdate: StateFlow<AppUpdateInfo?> = _availableUpdate.asStateFlow()
 
+    private val _isDialogVisible = MutableStateFlow<Boolean>(false)
+    val isDialogVisible: StateFlow<Boolean> = _isDialogVisible.asStateFlow()
+
     private val _downloadState = MutableStateFlow<UpdateDownloadState>(UpdateDownloadState.Idle)
     val downloadState: StateFlow<UpdateDownloadState> = _downloadState.asStateFlow()
 
@@ -60,6 +63,7 @@ class UpdateManager(private val context: Context) {
                             releaseNotes = releaseNotes
                         )
                         _availableUpdate.value = info
+                        _isDialogVisible.value = true
                         return@withContext info
                     }
                 }
@@ -70,7 +74,18 @@ class UpdateManager(private val context: Context) {
         }
     }
 
+    fun dismissUpdateDialog() {
+        _isDialogVisible.value = false
+    }
+
+    fun showUpdateDialog() {
+        if (_availableUpdate.value != null) {
+            _isDialogVisible.value = true
+        }
+    }
+
     fun dismissUpdate() {
+        _isDialogVisible.value = false
         _availableUpdate.value = null
         _downloadState.value = UpdateDownloadState.Idle
     }

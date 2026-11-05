@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -133,7 +134,9 @@ private enum class ChronosTab(val label: String) {
 
 @Composable
 fun MainScreen(
-    viewModel: StudyViewModel
+    viewModel: StudyViewModel,
+    isUpdateAvailable: Boolean = false,
+    onOpenUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val state by viewModel.uiState.collectAsState()
@@ -252,6 +255,8 @@ fun MainScreen(
             when (ChronosTab.entries[selectedTabIndex]) {
                 ChronosTab.BATTLEGROUND -> TodayBattlegroundTab(
                     state = state,
+                    isUpdateAvailable = isUpdateAvailable,
+                    onOpenUpdate = onOpenUpdate,
                     onSelectBatteryMode = viewModel::selectBatteryMode,
                     onSelectDate = viewModel::selectDate,
                     onExecuteDominoShift = viewModel::executeGlobalDominoShift,
@@ -491,6 +496,8 @@ private fun ExamCountdownFloatingButton(
 @Composable
 private fun TodayBattlegroundTab(
     state: StudyUiState,
+    isUpdateAvailable: Boolean = false,
+    onOpenUpdate: () -> Unit = {},
     onSelectBatteryMode: (EnergyLevel) -> Unit,
     onSelectDate: (Long) -> Unit,
     onExecuteDominoShift: () -> Unit,
@@ -519,7 +526,9 @@ private fun TodayBattlegroundTab(
                 selectedBatteryMode = state.batteryMode,
                 onSelectBatteryMode = onSelectBatteryMode,
                 onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
-                onOpenAccountability = onOpenAccountability
+                onOpenAccountability = onOpenAccountability,
+                isUpdateAvailable = isUpdateAvailable,
+                onOpenUpdate = onOpenUpdate
             )
         }
 
@@ -693,7 +702,9 @@ private fun BattlegroundTopHeader(
     selectedBatteryMode: EnergyLevel,
     onSelectBatteryMode: (EnergyLevel) -> Unit,
     onOpenNeuroGymQuickRescue: () -> Unit,
-    onOpenAccountability: () -> Unit
+    onOpenAccountability: () -> Unit,
+    isUpdateAvailable: Boolean = false,
+    onOpenUpdate: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -802,6 +813,48 @@ private fun BattlegroundTopHeader(
                             fontSize = 11.sp,
                             color = CyberCyan
                         )
+                    }
+                }
+
+                // If update is available, show stylish Update pill right beside Card button
+                if (isUpdateAvailable) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    val infiniteTransition = rememberInfiniteTransition(label = "updateBadgePulse")
+                    val pulseAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.55f,
+                        targetValue = 1.0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "updatePulse"
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = CyberEmerald.copy(alpha = 0.22f),
+                        border = BorderStroke(1.2.dp, CyberEmerald.copy(alpha = pulseAlpha)),
+                        modifier = Modifier.clickable { onOpenUpdate() }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = "Update Available",
+                                tint = CyberEmerald,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Update",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp,
+                                color = CyberEmerald
+                            )
+                        }
                     }
                 }
             }
@@ -1085,17 +1138,18 @@ private fun DateScrubberAndRouletteSection(
     val dayOfWeekFormatter = remember { DateTimeFormatter.ofPattern("EEE") }
     val monthFormatter = remember { DateTimeFormatter.ofPattern("MMM") }
 
-    // Build a 15-day window centered around today (or around selectedDateEpochDay if far in the future/past)
-    val baseCenterEpoch = if (selectedDateEpochDay in (todayEpochDay - 3L)..(todayEpochDay + 14L)) {
+    // Build a 1.5-month (45-day) window starting from past 3 days up to today + 45 days
+    val futureDaysWindow = 45L
+    val baseCenterEpoch = if (selectedDateEpochDay in (todayEpochDay - 3L)..(todayEpochDay + futureDaysWindow)) {
         todayEpochDay
     } else {
         selectedDateEpochDay
     }
     val scrubberDays = remember(baseCenterEpoch, todayEpochDay) {
         if (baseCenterEpoch == todayEpochDay) {
-            (-3L..14L).map { todayEpochDay + it }
+            (-3L..futureDaysWindow).map { todayEpochDay + it }
         } else {
-            (-3L..10L).map { baseCenterEpoch + it }
+            (-3L..futureDaysWindow).map { baseCenterEpoch + it }
         }
     }
 

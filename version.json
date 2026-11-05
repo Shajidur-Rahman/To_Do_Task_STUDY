@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.2.3",
+  "versionCode": 8,
+  "versionName": "1.2.4",
   "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk",
-  "releaseNotes": "Chronos HSC v1.2.3: Full NCTB HSC Bangla Syllabus Chapter Catalog & Card Layout Update! Shows exact HSC chapter names in Bangla when adding any subject, displays full Bangla chapter titles in To-Do cards, and fixes card height stretching when a missed task is shifted to the next day."
+  "releaseNotes": "Chronos HSC v1.2.4: Expanded Date Scrubber to today + 1.5 months (45 days) for long-term study planning, and added an in-app Update icon beside the Card share button that allows users to easily update anytime if they dismiss the initial launch prompt."
 }

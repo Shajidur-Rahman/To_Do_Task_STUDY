@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
                 val updateViewModel: UpdateViewModel = viewModel()
                 val updateManager = updateViewModel.updateManager
                 val availableUpdate by updateManager.availableUpdate.collectAsState()
+                val isDialogVisible by updateManager.isDialogVisible.collectAsState()
                 val downloadState by updateManager.downloadState.collectAsState()
                 val coroutineScope = rememberCoroutineScope()
 
@@ -40,22 +41,26 @@ class MainActivity : ComponentActivity() {
                     updateManager.checkForUpdates()
                 }
 
-                MainScreen(viewModel = studyViewModel)
+                MainScreen(
+                    viewModel = studyViewModel,
+                    isUpdateAvailable = availableUpdate != null,
+                    onOpenUpdate = { updateManager.showUpdateDialog() }
+                )
 
-                availableUpdate?.let { updateInfo ->
+                if (isDialogVisible && availableUpdate != null) {
                     AppUpdateDialog(
-                        updateInfo = updateInfo,
+                        updateInfo = availableUpdate!!,
                         downloadState = downloadState,
                         onStartUpdate = {
                             coroutineScope.launch {
-                                updateManager.downloadAndInstall(updateInfo)
+                                updateManager.downloadAndInstall(availableUpdate!!)
                             }
                         },
                         onRetryInstall = { apkUri ->
                             updateManager.retryInstallAfterPermission(apkUri)
                         },
                         onDismiss = {
-                            updateManager.dismissUpdate()
+                            updateManager.dismissUpdateDialog()
                         }
                     )
                 }
