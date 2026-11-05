@@ -6,6 +6,9 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -76,12 +79,16 @@ fun ChronosHscTheme(
     content: @Composable () -> Unit
 ) {
     val view = LocalView.current
+    val themePreferences = remember { ThemePreferences.getInstance(view.context) }
+    val themeMode by themePreferences.themeMode.collectAsState()
+    val isNature = themeMode == AppThemeMode.NATURE_LOVER
+
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as? Activity)?.window
             if (window != null) {
-                window.statusBarColor = ObsidianBackground.toArgb()
-                window.navigationBarColor = ObsidianSurface.toArgb()
+                window.statusBarColor = (if (isNature) TerrariumBackground else ObsidianBackground).toArgb()
+                window.navigationBarColor = (if (isNature) TerrariumSurface else ObsidianSurface).toArgb()
                 val controller = WindowCompat.getInsetsController(window, view)
                 controller.isAppearanceLightStatusBars = false
                 controller.isAppearanceLightNavigationBars = false

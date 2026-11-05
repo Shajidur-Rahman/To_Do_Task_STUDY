@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExamCountdownEntity::class,
         NeuroSessionEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(RoomTypeConverters::class)
@@ -69,6 +69,8 @@ abstract class StudyDatabase : RoomDatabase() {
                         `echoIntervalDays` INTEGER,
                         `sliceEnergyOverride` TEXT,
                         `xpMultiplier` INTEGER NOT NULL DEFAULT 1,
+                        `originalScheduledEpochDay` INTEGER NOT NULL DEFAULT 0,
+                        `shiftLagCount` INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY(`sliceId`),
                         FOREIGN KEY(`chainId`) REFERENCES `study_topic_chains`(`chainId`) ON UPDATE NO ACTION ON DELETE CASCADE
                     )
@@ -127,6 +129,14 @@ abstract class StudyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `originalScheduledEpochDay` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `shiftLagCount` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE `daily_task_slices` SET `originalScheduledEpochDay` = `scheduledDateEpochDay` WHERE `originalScheduledEpochDay` = 0")
+            }
+        }
+
         fun getInstance(context: Context): StudyDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -134,7 +144,7 @@ abstract class StudyDatabase : RoomDatabase() {
                     StudyDatabase::class.java,
                     "chronos_hsc_study_engine.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_1_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

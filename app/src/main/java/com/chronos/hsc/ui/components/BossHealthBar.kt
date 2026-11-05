@@ -52,6 +52,8 @@ import com.chronos.hsc.ui.theme.ObsidianBorder
 import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.theme.AppThemeMode
+import com.chronos.hsc.ui.theme.LocalAppThemeMode
 import kotlin.math.max
 
 @Composable
@@ -63,6 +65,18 @@ fun BossHealthBar(
     compact: Boolean = false,
     barHeight: Dp = if (compact) 8.dp else 12.dp
 ) {
+    if (LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER) {
+        NatureWormBossBar(
+            chain = chain,
+            coreSlices = coreSlices,
+            currentBossHp = currentBossHp,
+            modifier = modifier,
+            compact = compact,
+            barHeight = barHeight
+        )
+        return
+    }
+
     val totalSegments = max(1, chain.totalDays)
     val sortedCore = coreSlices.sortedBy { it.sliceNumber }
     val subjectColor = chain.subject.brandColor()

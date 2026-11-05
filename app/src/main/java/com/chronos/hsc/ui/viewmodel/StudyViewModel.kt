@@ -404,6 +404,40 @@ class StudyViewModel(
         }
     }
 
+    fun catchUpSliceToToday(sliceId: String) {
+        viewModelScope.launch {
+            val count = repository.catchUpSliceToToday(sliceId, todayEpochDay)
+            if (count > 0) {
+                selectedDateFlow.value = todayEpochDay
+                _events.emit(
+                    StudyUiEvent.ShowSnackbar(
+                        message = "Instant Catch-Up: Re-aligned $count slice(s) starting from today!"
+                    )
+                )
+            }
+        }
+    }
+
+    fun instantCatchUpAllLaggingChains() {
+        viewModelScope.launch {
+            val count = repository.instantCatchUpAllLaggingChains(todayEpochDay)
+            if (count > 0) {
+                selectedDateFlow.value = todayEpochDay
+                _events.emit(
+                    StudyUiEvent.ShowSnackbar(
+                        message = "Instant Catch-Up: Re-baselined $count lagging slice(s) to today! Fresh start activated."
+                    )
+                )
+            } else {
+                _events.emit(
+                    StudyUiEvent.ShowSnackbar(
+                        message = "All caught up! No lagging chains found."
+                    )
+                )
+            }
+        }
+    }
+
     fun incrementProblemSubCounter(sliceId: String) {
         viewModelScope.launch {
             repository.incrementProblemCounter(sliceId)

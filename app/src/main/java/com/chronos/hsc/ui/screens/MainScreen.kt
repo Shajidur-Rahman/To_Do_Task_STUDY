@@ -117,6 +117,21 @@ import com.chronos.hsc.ui.theme.ObsidianSurfaceElevated
 import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.TextSecondary
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.runtime.CompositionLocalProvider
+import com.chronos.hsc.ui.components.NatureAmbientOverlayCanvas
+import com.chronos.hsc.ui.screens.UiSettingsScreen
+import com.chronos.hsc.ui.theme.AppThemeMode
+import com.chronos.hsc.ui.theme.FoliageDensity
+import com.chronos.hsc.ui.theme.LocalAppThemeMode
+import com.chronos.hsc.ui.theme.LocalNatureCritterType
+import com.chronos.hsc.ui.theme.NatureLeafGreen
+import com.chronos.hsc.ui.theme.NatureSproutLime
+import com.chronos.hsc.ui.theme.TerrariumBackground
+import com.chronos.hsc.ui.theme.TerrariumBorder
+import com.chronos.hsc.ui.theme.TerrariumSurface
+import com.chronos.hsc.ui.theme.TerrariumSurfaceElevated
+import com.chronos.hsc.ui.theme.ThemePreferences
 import com.chronos.hsc.ui.theme.brandColor
 import com.chronos.hsc.ui.viewmodel.StudyUiEvent
 import com.chronos.hsc.ui.viewmodel.StudyUiState
@@ -129,7 +144,8 @@ private enum class ChronosTab(val label: String) {
     BATTLEGROUND("Battleground"),
     SYLLABUS_BOSSES("Syllabus Bosses"),
     ANALYTICS("Analytics"),
-    NEURO_GYM("Neuro-Gym")
+    NEURO_GYM("Neuro-Gym"),
+    UI_SETTINGS("UI Settings")
 }
 
 @Composable
@@ -142,6 +158,17 @@ fun MainScreen(
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val themePreferences = remember { ThemePreferences.getInstance(context) }
+    val currentTheme by themePreferences.themeMode.collectAsState()
+    val critterType by themePreferences.critterType.collectAsState()
+    val foliageDensity by themePreferences.foliageDensity.collectAsState()
+    val isCompactHeader by themePreferences.compactHeader.collectAsState()
+    val ambientAnimations by themePreferences.ambientAnimationsEnabled.collectAsState()
+
+    val isNature = currentTheme == AppThemeMode.NATURE_LOVER
+    val containerBg = if (isNature) TerrariumBackground else ObsidianBackground
+    val surfaceBg = if (isNature) TerrariumSurface else ObsidianSurface
+    val accentColor = if (isNature) NatureLeafGreen else CyberCyan
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -172,133 +199,151 @@ fun MainScreen(
         }
     }
 
-    Scaffold(
-        containerColor = ObsidianBackground,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        floatingActionButton = {
-            if (ChronosTab.entries[selectedTabIndex] != ChronosTab.NEURO_GYM) {
-                Column(
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+    CompositionLocalProvider(
+        LocalAppThemeMode provides currentTheme,
+        LocalNatureCritterType provides critterType
+    ) {
+        Scaffold(
+            containerColor = containerBg,
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            floatingActionButton = {
+                if (ChronosTab.entries[selectedTabIndex] != ChronosTab.NEURO_GYM &&
+                    ChronosTab.entries[selectedTabIndex] != ChronosTab.UI_SETTINGS
                 ) {
-                    // Upper Button: Exam Countdown Pill Button
-                    ExamCountdownFloatingButton(
-                        todayEpochDay = state.todayEpochDay,
-                        activeExam = state.pinnedExam,
-                        onClick = { viewModel.openExamCountdownModal() }
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Upper Button: Exam Countdown Pill Button
+                        ExamCountdownFloatingButton(
+                            todayEpochDay = state.todayEpochDay,
+                            activeExam = state.pinnedExam,
+                            onClick = { viewModel.openExamCountdownModal() }
+                        )
+
+                        // Bottom Button: Existing cyan / green + Add Study Topic FAB
+                        ExtendedFloatingActionButton(
+                            onClick = { viewModel.openAddTopicModal() },
+                            containerColor = accentColor,
+                            contentColor = if (isNature) Color(0xFF00210E) else Color(0xFF001F24),
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Add Study Topic"
+                                )
+                            },
+                            text = {
+                                Text(
+                                    text = "Add Study Topic",
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        )
+                    }
+                }
+            },
+            bottomBar = {
+                NavigationBar(
+                    containerColor = surfaceBg,
+                    tonalElevation = 8.dp
+                ) {
+                    ChronosTab.entries.forEachIndexed { index, tab ->
+                        val isSelected = selectedTabIndex == index
+                        NavigationBarItem(
+                            selected = isSelected,
+                            onClick = { selectedTabIndex = index },
+                            icon = {
+                                val icon = when (tab) {
+                                    ChronosTab.BATTLEGROUND -> Icons.Default.Bolt
+                                    ChronosTab.SYLLABUS_BOSSES -> Icons.Default.AutoAwesomeMotion
+                                    ChronosTab.ANALYTICS -> Icons.Default.Analytics
+                                    ChronosTab.NEURO_GYM -> Icons.Default.Psychology
+                                    ChronosTab.UI_SETTINGS -> Icons.Default.Tune
+                                }
+                                Icon(imageVector = icon, contentDescription = tab.label)
+                            },
+                            label = {
+                                Text(
+                                    text = tab.label,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    fontSize = 11.sp
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = accentColor,
+                                selectedTextColor = accentColor,
+                                indicatorColor = accentColor.copy(alpha = 0.16f),
+                                unselectedIconColor = TextMuted,
+                                unselectedTextColor = TextMuted
+                            )
+                        )
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                when (ChronosTab.entries[selectedTabIndex]) {
+                    ChronosTab.BATTLEGROUND -> TodayBattlegroundTab(
+                        state = state,
+                        isUpdateAvailable = isUpdateAvailable,
+                        onOpenUpdate = onOpenUpdate,
+                        isCompactHeader = isCompactHeader,
+                        isNature = isNature,
+                        foliageDensity = foliageDensity,
+                        ambientAnimations = ambientAnimations,
+                        onSelectBatteryMode = viewModel::selectBatteryMode,
+                        onSelectDate = viewModel::selectDate,
+                        onExecuteDominoShift = viewModel::executeGlobalDominoShift,
+                        onOpenRoulette = viewModel::openTaskRoulette,
+                        onOpenAddTopic = viewModel::openAddTopicModal,
+                        onOpenNeuroGymQuickRescue = {
+                            selectedTabIndex = ChronosTab.NEURO_GYM.ordinal
+                        },
+                        onOpenAccountability = viewModel::openAccountabilityModal,
+                        onIncrementProblem = viewModel::incrementProblemSubCounter,
+                        onDecrementProblem = viewModel::decrementProblemSubCounter,
+                        onCompleteSlice = viewModel::completeTaskSlice,
+                        onPushDominoPlusOne = viewModel::pushSliceDominoPlusOneDay,
+                        onRequestDeleteSlice = viewModel::requestDeleteForSlice,
+                        onConvertHiddenToLightReview = viewModel::convertHiddenSliceToLightReview,
+                        onCatchUpSlice = viewModel::catchUpSliceToToday,
+                        onInstantCatchUpAll = viewModel::instantCatchUpAllLaggingChains
                     )
 
-                    // Bottom Button: Existing cyan + Add Study Topic FAB
-                    ExtendedFloatingActionButton(
-                        onClick = { viewModel.openAddTopicModal() },
-                        containerColor = CyberCyan,
-                        contentColor = Color(0xFF001F24),
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add Study Topic"
-                            )
-                        },
-                        text = {
-                            Text(
-                                text = "Add Study Topic",
-                                fontWeight = FontWeight.ExtraBold
-                            )
+                    ChronosTab.SYLLABUS_BOSSES -> ActiveChainsTab(
+                        state = state,
+                        onOpenAddTopic = viewModel::openAddTopicModal,
+                        onRequestDeleteChain = viewModel::requestDeleteForEntireChain,
+                        onJumpToSliceDate = { epochDay ->
+                            viewModel.selectDate(epochDay)
+                            selectedTabIndex = 0
                         }
                     )
-                }
-            }
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = ObsidianSurface,
-                tonalElevation = 8.dp
-            ) {
-                ChronosTab.entries.forEachIndexed { index, tab ->
-                    val isSelected = selectedTabIndex == index
-                    NavigationBarItem(
-                        selected = isSelected,
-                        onClick = { selectedTabIndex = index },
-                        icon = {
-                            val icon = when (tab) {
-                                ChronosTab.BATTLEGROUND -> Icons.Default.Bolt
-                                ChronosTab.SYLLABUS_BOSSES -> Icons.Default.AutoAwesomeMotion
-                                ChronosTab.ANALYTICS -> Icons.Default.Analytics
-                                ChronosTab.NEURO_GYM -> Icons.Default.Psychology
-                            }
-                            Icon(imageVector = icon, contentDescription = tab.label)
+
+                    ChronosTab.ANALYTICS -> AnalyticsAndHeatmapTab(
+                        state = state,
+                        onJumpToSliceDate = { epochDay ->
+                            viewModel.selectDate(epochDay)
+                            selectedTabIndex = 0
                         },
-                        label = {
-                            Text(
-                                text = tab.label,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 11.sp
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = CyberCyan,
-                            selectedTextColor = CyberCyan,
-                            indicatorColor = CyberCyan.copy(alpha = 0.16f),
-                            unselectedIconColor = TextMuted,
-                            unselectedTextColor = TextMuted
-                        )
+                        onOpenAccountabilityModal = viewModel::openAccountabilityModal
+                    )
+
+                    ChronosTab.NEURO_GYM -> NeuroGymScreen(
+                        telemetry = state.neuroTelemetry,
+                        onDrillCompleted = viewModel::recordNeuroDrillCompleted
+                    )
+
+                    ChronosTab.UI_SETTINGS -> UiSettingsScreen(
+                        preferences = themePreferences,
+                        viewModel = viewModel
                     )
                 }
             }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (ChronosTab.entries[selectedTabIndex]) {
-                ChronosTab.BATTLEGROUND -> TodayBattlegroundTab(
-                    state = state,
-                    isUpdateAvailable = isUpdateAvailable,
-                    onOpenUpdate = onOpenUpdate,
-                    onSelectBatteryMode = viewModel::selectBatteryMode,
-                    onSelectDate = viewModel::selectDate,
-                    onExecuteDominoShift = viewModel::executeGlobalDominoShift,
-                    onOpenRoulette = viewModel::openTaskRoulette,
-                    onOpenAddTopic = viewModel::openAddTopicModal,
-                    onOpenNeuroGymQuickRescue = {
-                        selectedTabIndex = ChronosTab.NEURO_GYM.ordinal
-                    },
-                    onOpenAccountability = viewModel::openAccountabilityModal,
-                    onIncrementProblem = viewModel::incrementProblemSubCounter,
-                    onDecrementProblem = viewModel::decrementProblemSubCounter,
-                    onCompleteSlice = viewModel::completeTaskSlice,
-                    onPushDominoPlusOne = viewModel::pushSliceDominoPlusOneDay,
-                    onRequestDeleteSlice = viewModel::requestDeleteForSlice,
-                    onConvertHiddenToLightReview = viewModel::convertHiddenSliceToLightReview
-                )
-
-                ChronosTab.SYLLABUS_BOSSES -> ActiveChainsTab(
-                    state = state,
-                    onOpenAddTopic = viewModel::openAddTopicModal,
-                    onRequestDeleteChain = viewModel::requestDeleteForEntireChain,
-                    onJumpToSliceDate = { epochDay ->
-                        viewModel.selectDate(epochDay)
-                        selectedTabIndex = 0
-                    }
-                )
-
-                ChronosTab.ANALYTICS -> AnalyticsAndHeatmapTab(
-                    state = state,
-                    onJumpToSliceDate = { epochDay ->
-                        viewModel.selectDate(epochDay)
-                        selectedTabIndex = 0
-                    },
-                    onOpenAccountabilityModal = viewModel::openAccountabilityModal
-                )
-
-                ChronosTab.NEURO_GYM -> NeuroGymScreen(
-                    telemetry = state.neuroTelemetry,
-                    onDrillCompleted = viewModel::recordNeuroDrillCompleted
-                )
-            }
-        }
 
         // 1. Structured HSC Topic Creation Modal
         if (state.isAddTopicModalOpen) {
@@ -383,6 +428,7 @@ fun MainScreen(
             )
         }
     }
+}
 }
 
 @Composable
@@ -498,6 +544,10 @@ private fun TodayBattlegroundTab(
     state: StudyUiState,
     isUpdateAvailable: Boolean = false,
     onOpenUpdate: () -> Unit = {},
+    isCompactHeader: Boolean = true,
+    isNature: Boolean = false,
+    foliageDensity: FoliageDensity = FoliageDensity.LUSH,
+    ambientAnimations: Boolean = true,
     onSelectBatteryMode: (EnergyLevel) -> Unit,
     onSelectDate: (Long) -> Unit,
     onExecuteDominoShift: () -> Unit,
@@ -510,187 +560,515 @@ private fun TodayBattlegroundTab(
     onCompleteSlice: (String) -> Unit,
     onPushDominoPlusOne: (SliceWithParentChain) -> Unit,
     onRequestDeleteSlice: (SliceWithParentChain) -> Unit,
-    onConvertHiddenToLightReview: (String) -> Unit
+    onConvertHiddenToLightReview: (String) -> Unit,
+    onCatchUpSlice: (String) -> Unit = {},
+    onInstantCatchUpAll: () -> Unit = {}
 ) {
     var isZombieHiddenExpanded by remember { mutableStateOf(false) }
+    var isToolsDeckExpanded by rememberSaveable { mutableStateOf(false) }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 140.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // 1. Top Header: Level/XP Bar, Streak Counter, Battery Mode Toggle & Neuro-Gym Quick-Rescue Trigger
-        item {
-            BattlegroundTopHeader(
-                userStats = state.userStats,
-                selectedBatteryMode = state.batteryMode,
-                onSelectBatteryMode = onSelectBatteryMode,
-                onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
-                onOpenAccountability = onOpenAccountability,
-                isUpdateAvailable = isUpdateAvailable,
-                onOpenUpdate = onOpenUpdate
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (isNature && ambientAnimations) {
+            NatureAmbientOverlayCanvas(
+                density = foliageDensity,
+                modifier = Modifier.fillMaxSize()
             )
         }
 
-        // 2. Active Micro-Sprint Banner (if Task Roulette timer is running)
-        state.sprintTimerState?.let { sprint ->
-            if (sprint.isSprintRunning) {
-                item {
-                    ActiveSprintBanner(
-                        sprintBadge = sprint.targetShortBadge,
-                        sprintTitle = sprint.targetSliceTitle,
-                        isPaused = sprint.isSprintPaused,
-                        secondsRemaining = sprint.sprintSecondsRemaining,
-                        onOpenSprintModal = onOpenRoulette
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 140.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // 1. Top Header: Level/XP Bar, Streak Counter, Battery Mode Toggle & Neuro-Gym Quick-Rescue Trigger
+            item {
+                if (isCompactHeader) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactTopHudBar(
+                            userStats = state.userStats,
+                            selectedBatteryMode = state.batteryMode,
+                            isToolsExpanded = isToolsDeckExpanded,
+                            isUpdateAvailable = isUpdateAvailable,
+                            isNature = isNature,
+                            onToggleTools = { isToolsDeckExpanded = !isToolsDeckExpanded },
+                            onCycleBatteryMode = {
+                                val nextMode = when (state.batteryMode) {
+                                    EnergyLevel.HIGH_FOCUS -> EnergyLevel.MEDIUM
+                                    EnergyLevel.MEDIUM -> EnergyLevel.ZOMBIE_MODE
+                                    EnergyLevel.ZOMBIE_MODE -> EnergyLevel.HIGH_FOCUS
+                                }
+                                onSelectBatteryMode(nextMode)
+                            },
+                            onOpenUpdate = onOpenUpdate
+                        )
+
+                        AnimatedVisibility(visible = isToolsDeckExpanded) {
+                            CollapsibleQuickCommandDeck(
+                                isNature = isNature,
+                                isUpdateAvailable = isUpdateAvailable,
+                                onOpenRoulette = onOpenRoulette,
+                                onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
+                                onOpenAccountability = onOpenAccountability,
+                                onInstantCatchUpAll = onInstantCatchUpAll,
+                                onOpenUpdate = onOpenUpdate
+                            )
+                        }
+                    }
+                } else {
+                    BattlegroundTopHeader(
+                        userStats = state.userStats,
+                        selectedBatteryMode = state.batteryMode,
+                        onSelectBatteryMode = onSelectBatteryMode,
+                        onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
+                        onOpenAccountability = onOpenAccountability,
+                        isUpdateAvailable = isUpdateAvailable,
+                        onOpenUpdate = onOpenUpdate
                     )
                 }
             }
-        }
 
-        // 3. 1-Tap Domino Shift Conflict Banner (When past slices are unfinished)
-        if (state.overdueSlices.isNotEmpty()) {
+            // 2. Active Micro-Sprint Banner (if Task Roulette timer is running)
+            state.sprintTimerState?.let { sprint ->
+                if (sprint.isSprintRunning) {
+                    item {
+                        ActiveSprintBanner(
+                            sprintBadge = sprint.targetShortBadge,
+                            sprintTitle = sprint.targetSliceTitle,
+                            isPaused = sprint.isSprintPaused,
+                            secondsRemaining = sprint.sprintSecondsRemaining,
+                            onOpenSprintModal = onOpenRoulette
+                        )
+                    }
+                }
+            }
+
+            // 3. 1-Tap Domino Shift Conflict Banner (When past slices are unfinished)
+            if (state.overdueSlices.isNotEmpty()) {
+                item {
+                    DominoConflictBanner(
+                        overdueSlices = state.overdueSlices,
+                        overdueChainsCount = state.overdueChainsCount,
+                        onExecuteDominoShift = onExecuteDominoShift
+                    )
+                }
+            }
+
+            // 4. Quick Actions Row (Task Roulette + Adaptive Date Scrubber)
             item {
-                DominoConflictBanner(
-                    overdueSlices = state.overdueSlices,
-                    overdueChainsCount = state.overdueChainsCount,
-                    onExecuteDominoShift = onExecuteDominoShift
+                DateScrubberAndRouletteSection(
+                    todayEpochDay = state.todayEpochDay,
+                    selectedDateEpochDay = state.selectedDateEpochDay,
+                    allChainsWithSlices = state.allChainsWithSlices,
+                    isCompact = isCompactHeader,
+                    onSelectDate = onSelectDate,
+                    onOpenRoulette = onOpenRoulette
                 )
             }
-        }
 
-        // 4. Quick Actions Row (Task Roulette + Adaptive Date Scrubber)
-        item {
-            DateScrubberAndRouletteSection(
-                todayEpochDay = state.todayEpochDay,
-                selectedDateEpochDay = state.selectedDateEpochDay,
-                allChainsWithSlices = state.allChainsWithSlices,
-                onSelectDate = onSelectDate,
-                onOpenRoulette = onOpenRoulette
-            )
-        }
+            // 5. Active Bosses Mini Carousel
+            val activeBossChains = state.allChainsWithSlices.filter { !it.chain.isChainCompleted }
+            if (activeBossChains.isNotEmpty()) {
+                item {
+                    ActiveBossesMiniCarousel(activeChains = activeBossChains)
+                }
+            }
 
-        // 5. Active Bosses Mini Carousel
-        val activeBossChains = state.allChainsWithSlices.filter { !it.chain.isChainCompleted }
-        if (activeBossChains.isNotEmpty()) {
+            // 6. Section Title for Selected Date Slices
             item {
-                ActiveBossesMiniCarousel(activeChains = activeBossChains)
-            }
-        }
+                val selectedLocalDate = LocalDate.ofEpochDay(state.selectedDateEpochDay)
+                val dateTitle = when (state.selectedDateEpochDay) {
+                    state.todayEpochDay -> "TODAY'S BATTLEGROUND SLICES"
+                    state.todayEpochDay - 1L -> "YESTERDAY'S SLICES"
+                    state.todayEpochDay + 1L -> "TOMORROW'S SCHEDULED SLICES"
+                    else -> selectedLocalDate.format(DateTimeFormatter.ofPattern("EEE, MMM d")).uppercase() + " SLICES"
+                }
 
-        // 6. Section Title for Selected Date Slices
-        item {
-            val selectedLocalDate = LocalDate.ofEpochDay(state.selectedDateEpochDay)
-            val dateTitle = when (state.selectedDateEpochDay) {
-                state.todayEpochDay -> "TODAY'S BATTLEGROUND SLICES"
-                state.todayEpochDay - 1L -> "YESTERDAY'S SLICES"
-                state.todayEpochDay + 1L -> "TOMORROW'S SCHEDULED SLICES"
-                else -> selectedLocalDate.format(DateTimeFormatter.ofPattern("EEE, MMM d")).uppercase() + " SLICES"
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = dateTitle,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
-                    color = CyberCyan
-                )
-                Text(
-                    text = "${state.visibleDateSlices.count { it.slice.isCompleted }}/${state.visibleDateSlices.size} Done",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    color = TextSecondary
-                )
-            }
-        }
-
-        // 7. Task Slice Cards List
-        if (state.visibleDateSlices.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(ObsidianSurface)
-                        .border(1.dp, ObsidianBorder, RoundedCornerShape(16.dp))
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = if (state.hiddenZombieSlices.isNotEmpty()) {
-                                "🧟 All heavy tasks are hidden in 15% Zombie Mode"
-                            } else {
-                                "⚡ No study slices scheduled for this date"
-                            },
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = TextPrimary,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Create an HSC topic chain (Bangla, English, Physics, Chemistry, Higher Math, Biology, or ICT) to auto-slice it across 1 to 15 days.",
-                            fontSize = 12.sp,
-                            color = TextSecondary,
-                            textAlign = TextAlign.Center
-                        )
-                        if (state.hiddenZombieSlices.isEmpty()) {
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Button(
-                                onClick = onOpenAddTopic,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = CyberCyan,
-                                    contentColor = Color(0xFF001F24)
-                                ),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Create Study Topic Chain",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 13.sp
-                                )
+                    Text(
+                        text = dateTitle,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp,
+                        color = if (isNature) NatureLeafGreen else CyberCyan
+                    )
+                    Text(
+                        text = "${state.visibleDateSlices.count { it.slice.isCompleted }}/${state.visibleDateSlices.size} Done",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                }
+            }
+
+            // 7. Task Slice Cards List
+            if (state.visibleDateSlices.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isNature) TerrariumSurface else ObsidianSurface)
+                            .border(1.dp, if (isNature) TerrariumBorder else ObsidianBorder, RoundedCornerShape(16.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = if (state.hiddenZombieSlices.isNotEmpty()) {
+                                    "🧟 All heavy tasks are hidden in 15% Zombie Mode"
+                                } else {
+                                    "⚡ No study slices scheduled for this date"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = TextPrimary,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Create an HSC topic chain (Bangla, English, Physics, Chemistry, Higher Math, Biology, or ICT) to auto-slice it across 1 to 15 days.",
+                                fontSize = 12.sp,
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center
+                            )
+                            if (state.hiddenZombieSlices.isEmpty()) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Button(
+                                    onClick = onOpenAddTopic,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isNature) NatureLeafGreen else CyberCyan,
+                                        contentColor = if (isNature) Color(0xFF00210E) else Color(0xFF001F24)
+                                    ),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Create Study Topic Chain",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 13.sp
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            } else {
+                items(
+                    items = state.visibleDateSlices,
+                    key = { it.slice.sliceId }
+                ) { sliceWithChain ->
+                    SwipeToSlashTaskCard(
+                        item = sliceWithChain,
+                        todayEpochDay = state.todayEpochDay,
+                        onIncrementProblem = { onIncrementProblem(sliceWithChain.slice.sliceId) },
+                        onDecrementProblem = { onDecrementProblem(sliceWithChain.slice.sliceId) },
+                        onCompleteSlice = { onCompleteSlice(sliceWithChain.slice.sliceId) },
+                        onPushDominoPlusOneDay = { onPushDominoPlusOne(sliceWithChain) },
+                        onRequestDelete = { onRequestDeleteSlice(sliceWithChain) },
+                        onCatchUpToToday = { onCatchUpSlice(sliceWithChain.slice.sliceId) }
+                    )
+                }
             }
-        } else {
-            items(
-                items = state.visibleDateSlices,
-                key = { it.slice.sliceId }
-            ) { sliceWithChain ->
-                SwipeToSlashTaskCard(
-                    item = sliceWithChain,
-                    todayEpochDay = state.todayEpochDay,
-                    onIncrementProblem = { onIncrementProblem(sliceWithChain.slice.sliceId) },
-                    onDecrementProblem = { onDecrementProblem(sliceWithChain.slice.sliceId) },
-                    onCompleteSlice = { onCompleteSlice(sliceWithChain.slice.sliceId) },
-                    onPushDominoPlusOneDay = { onPushDominoPlusOne(sliceWithChain) },
-                    onRequestDelete = { onRequestDeleteSlice(sliceWithChain) }
-                )
+
+            // 8. Zombie Mode Protected Brain Footer (Collapsed heavy tasks + Convert to Light Review 15m)
+            if (state.batteryMode == EnergyLevel.ZOMBIE_MODE && state.hiddenZombieSlices.isNotEmpty()) {
+                item {
+                    ZombieModeHiddenTasksFooter(
+                        hiddenSlices = state.hiddenZombieSlices,
+                        isExpanded = isZombieHiddenExpanded,
+                        onToggleExpand = { isZombieHiddenExpanded = !isZombieHiddenExpanded },
+                        onConvertToLightReview = onConvertHiddenToLightReview
+                    )
+                }
             }
         }
+    }
+}
 
-        // 8. Zombie Mode Protected Brain Footer (Collapsed heavy tasks + Convert to Light Review 15m)
-        if (state.batteryMode == EnergyLevel.ZOMBIE_MODE && state.hiddenZombieSlices.isNotEmpty()) {
-            item {
-                ZombieModeHiddenTasksFooter(
-                    hiddenSlices = state.hiddenZombieSlices,
-                    isExpanded = isZombieHiddenExpanded,
-                    onToggleExpand = { isZombieHiddenExpanded = !isZombieHiddenExpanded },
-                    onConvertToLightReview = onConvertHiddenToLightReview
+@Composable
+private fun CompactTopHudBar(
+    userStats: UserStats,
+    selectedBatteryMode: EnergyLevel,
+    isToolsExpanded: Boolean,
+    isUpdateAvailable: Boolean,
+    isNature: Boolean,
+    onToggleTools: () -> Unit,
+    onCycleBatteryMode: () -> Unit,
+    onOpenUpdate: () -> Unit
+) {
+    val primaryColor = if (isNature) NatureLeafGreen else CyberCyan
+    val secondaryColor = if (isNature) NatureSproutLime else CyberMagenta
+    val surfaceBg = if (isNature) TerrariumSurface else ObsidianSurface
+    val borderCol = if (isNature) TerrariumBorder else ObsidianBorder
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = surfaceBg,
+        border = BorderStroke(1.dp, borderCol),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left: Badge + Level + inline XP bar
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = if (isNature) "🌿 CHRONOS" else "⚡ CHRONOS",
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 13.sp,
+                    color = primaryColor
                 )
+
+                // LVL Pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(secondaryColor.copy(alpha = 0.2f))
+                        .border(1.dp, secondaryColor.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "L${userStats.currentLevel}",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 10.sp,
+                        color = TextPrimary
+                    )
+                }
+
+                // Thin Inline XP Progress Bar
+                LinearProgressIndicator(
+                    progress = { userStats.levelProgressFraction },
+                    color = primaryColor,
+                    trackColor = if (isNature) Color(0xFF08120B) else ObsidianBackground,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                )
+            }
+
+            // Center: Streak badge + Compact Battery Mode Pill
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Streak Badge
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CyberOrange.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, CyberOrange.copy(alpha = 0.7f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🔥 ${userStats.streakDays}d",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = CyberOrange
+                        )
+                    }
+                }
+
+                // Compact Battery Mode Pill (cycles on tap!)
+                val (modeLabel, modeColor) = when (selectedBatteryMode) {
+                    EnergyLevel.HIGH_FOCUS -> "⚡100%" to primaryColor
+                    EnergyLevel.MEDIUM -> "🔋50%" to CyberAmber
+                    EnergyLevel.ZOMBIE_MODE -> "🧟15%" to CyberEmerald
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = modeColor.copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, modeColor),
+                    modifier = Modifier.clickable { onCycleBatteryMode() }
+                ) {
+                    Text(
+                        text = modeLabel,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 10.sp,
+                        color = modeColor,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            // Right: Update Pill (if available) + Tools Toggle Chip
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                if (isUpdateAvailable) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = CyberEmerald.copy(alpha = 0.25f),
+                        border = BorderStroke(1.dp, CyberEmerald),
+                        modifier = Modifier.clickable { onOpenUpdate() }
+                    ) {
+                        Text(
+                            text = "⚡ Upd",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 9.sp,
+                            color = CyberEmerald,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                // 🎛️ Tools Toggle Button
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isToolsExpanded) primaryColor.copy(alpha = 0.25f) else (if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated),
+                    border = BorderStroke(1.dp, if (isToolsExpanded) primaryColor else borderCol),
+                    modifier = Modifier.clickable { onToggleTools() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isToolsExpanded) "🎛️ ▲" else "🎛️ ▼",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            color = if (isToolsExpanded) primaryColor else TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleQuickCommandDeck(
+    isNature: Boolean,
+    isUpdateAvailable: Boolean,
+    onOpenRoulette: () -> Unit,
+    onOpenNeuroGymQuickRescue: () -> Unit,
+    onOpenAccountability: () -> Unit,
+    onInstantCatchUpAll: () -> Unit,
+    onOpenUpdate: () -> Unit
+) {
+    val primaryColor = if (isNature) NatureLeafGreen else CyberCyan
+    val secondaryColor = if (isNature) NatureSproutLime else CyberMagenta
+    val surfaceBg = if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
+    val borderCol = if (isNature) TerrariumBorder else ObsidianBorder
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = surfaceBg,
+        border = BorderStroke(1.dp, borderCol),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 🎲 Spin Roulette
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = secondaryColor.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, secondaryColor.copy(alpha = 0.7f)),
+                modifier = Modifier.clickable { onOpenRoulette() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "🎲 Spin Roulette", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = secondaryColor)
+                }
+            }
+
+            // 🧠 60s Reset
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = CyberCyan.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.6f)),
+                modifier = Modifier.clickable { onOpenNeuroGymQuickRescue() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "🧠 60s Focus Reset", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan)
+                }
+            }
+
+            // 🎴 Card & Backup
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = primaryColor.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.6f)),
+                modifier = Modifier.clickable { onOpenAccountability() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "🎴 Card & Backup", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = primaryColor)
+                }
+            }
+
+            // 🚀 Catch Up All
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = CyberAmber.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, CyberAmber.copy(alpha = 0.7f)),
+                modifier = Modifier.clickable { onInstantCatchUpAll() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isNature) "🌿 Catch Up All" else "🚀 Catch Up All",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = CyberAmber
+                    )
+                }
+            }
+
+            if (isUpdateAvailable) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CyberEmerald.copy(alpha = 0.2f),
+                    border = BorderStroke(1.dp, CyberEmerald),
+                    modifier = Modifier.clickable { onOpenUpdate() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "⚡ Update App", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberEmerald)
+                    }
+                }
             }
         }
     }
@@ -1129,9 +1507,11 @@ private fun DateScrubberAndRouletteSection(
     todayEpochDay: Long,
     selectedDateEpochDay: Long,
     allChainsWithSlices: List<TopicChainWithSlices>,
+    isCompact: Boolean = false,
     onSelectDate: (Long) -> Unit,
     onOpenRoulette: () -> Unit
 ) {
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val allSlices = remember(allChainsWithSlices) {
         allChainsWithSlices.flatMap { it.slices }
     }
@@ -1153,50 +1533,52 @@ private fun DateScrubberAndRouletteSection(
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Task Roulette Button
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = CyberMagenta.copy(alpha = 0.16f),
-            border = BorderStroke(1.dp, CyberMagenta),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpenRoulette() }
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+    Column(verticalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp)) {
+        // Task Roulette Button (only shown in full non-compact mode; in compact mode it lives inside Tools drawer)
+        if (!isCompact) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isNature) NatureSproutLime.copy(alpha = 0.16f) else CyberMagenta.copy(alpha = 0.16f),
+                border = BorderStroke(1.dp, if (isNature) NatureSproutLime else CyberMagenta),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenRoulette() }
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = Icons.Default.Casino,
-                        contentDescription = "Task Roulette",
-                        tint = CyberMagenta,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "🎲 Spin Task Roulette (Beat Decision Paralysis)",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 13.sp,
-                            color = TextPrimary
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(
+                            imageVector = Icons.Default.Casino,
+                            contentDescription = "Task Roulette",
+                            tint = if (isNature) NatureSproutLime else CyberMagenta,
+                            modifier = Modifier.size(20.dp)
                         )
-                        Text(
-                            text = "Locks onto a random slice + 25m Micro-Sprint with 2x XP Multiplier",
-                            fontSize = 11.sp,
-                            color = TextSecondary
-                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "🎲 Spin Task Roulette (Beat Decision Paralysis)",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 13.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Locks onto a random slice + 25m Micro-Sprint with 2x XP Multiplier",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                        }
                     }
+                    Text(
+                        text = "SPIN >>",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.sp,
+                        color = if (isNature) NatureSproutLime else CyberMagenta
+                    )
                 }
-                Text(
-                    text = "SPIN >>",
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 11.sp,
-                    color = CyberMagenta
-                )
             }
         }
 
@@ -1208,8 +1590,8 @@ private fun DateScrubberAndRouletteSection(
             ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = CyberEmerald.copy(alpha = 0.18f),
-                    border = BorderStroke(1.dp, CyberEmerald),
+                    color = (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, if (isNature) NatureLeafGreen else CyberEmerald),
                     modifier = Modifier.clickable { onSelectDate(todayEpochDay) }
                 ) {
                     Row(
@@ -1219,7 +1601,7 @@ private fun DateScrubberAndRouletteSection(
                         Icon(
                             imageVector = Icons.Default.Today,
                             contentDescription = "Jump to Today",
-                            tint = CyberEmerald,
+                            tint = if (isNature) NatureLeafGreen else CyberEmerald,
                             modifier = Modifier.size(13.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -1227,7 +1609,7 @@ private fun DateScrubberAndRouletteSection(
                             text = "Jump Back to Today",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = CyberEmerald
+                            color = if (isNature) NatureLeafGreen else CyberEmerald
                         )
                     }
                 }
@@ -1239,7 +1621,7 @@ private fun DateScrubberAndRouletteSection(
         LaunchedEffect(todayEpochDay) {
             val targetIndex = scrubberDays.indexOf(todayEpochDay).coerceAtLeast(0)
             if (targetIndex > 0) {
-                val itemWidthPx = with(density) { 70.dp.toPx() }
+                val itemWidthPx = with(density) { 65.dp.toPx() }
                 val paddingPx = with(density) { 16.dp.toPx() }
                 scrubberScrollState.scrollTo((targetIndex * itemWidthPx - paddingPx).toInt().coerceAtLeast(0))
             }
@@ -1260,72 +1642,76 @@ private fun DateScrubberAndRouletteSection(
                 val incompleteCount = slicesOnDay.count { !it.isCompleted }
                 val hasOverdue = dayEpoch < todayEpochDay && incompleteCount > 0
 
+                val cardSurface = when {
+                    isSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else CyberCyan.copy(alpha = 0.22f)
+                    hasOverdue -> if (isNature) Color(0xFF331610) else CyberCrimson.copy(alpha = 0.16f)
+                    else -> if (isNature) TerrariumSurface else ObsidianSurface
+                }
+
+                val cardBorder = when {
+                    isSelected -> if (isNature) NatureLeafGreen else CyberCyan
+                    hasOverdue -> if (isNature) Color(0xFFEA580C) else CyberCrimson
+                    isToday -> if (isNature) NatureSproutLime.copy(alpha = 0.7f) else CyberEmerald.copy(alpha = 0.6f)
+                    else -> if (isNature) TerrariumBorder else ObsidianBorder
+                }
+
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = when {
-                        isSelected -> CyberCyan.copy(alpha = 0.22f)
-                        hasOverdue -> CyberCrimson.copy(alpha = 0.16f)
-                        else -> ObsidianSurface
-                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = cardSurface,
                     border = BorderStroke(
                         width = if (isSelected || isToday) 1.5.dp else 1.dp,
-                        color = when {
-                            isSelected -> CyberCyan
-                            hasOverdue -> CyberCrimson
-                            isToday -> CyberEmerald.copy(alpha = 0.6f)
-                            else -> ObsidianBorder
-                        }
+                        color = cardBorder
                     ),
                     modifier = Modifier
-                        .width(64.dp)
+                        .width(if (isCompact) 58.dp else 64.dp)
                         .clickable { onSelectDate(dayEpoch) }
                 ) {
                     Column(
-                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                        modifier = Modifier.padding(vertical = if (isCompact) 5.dp else 8.dp, horizontal = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
                             text = if (isToday) "TODAY" else date.format(dayOfWeekFormatter).uppercase(),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 9.sp,
+                            fontSize = if (isCompact) 8.5.sp else 9.sp,
                             color = when {
-                                isSelected -> CyberCyan
-                                isToday -> CyberEmerald
+                                isSelected -> if (isNature) NatureLeafGreen else CyberCyan
+                                isToday -> if (isNature) NatureSproutLime else CyberEmerald
                                 else -> TextSecondary
                             }
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(if (isCompact) 1.dp else 2.dp))
                         Text(
                             text = "${date.dayOfMonth}",
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp,
+                            fontSize = if (isCompact) 14.sp else 15.sp,
                             color = TextPrimary
                         )
                         Text(
                             text = date.format(monthFormatter),
-                            fontSize = 9.sp,
+                            fontSize = if (isCompact) 8.5.sp else 9.sp,
                             color = TextMuted
                         )
-                        Spacer(modifier = Modifier.height(3.dp))
+                        Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 3.dp))
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(
                                     when {
-                                        hasOverdue -> CyberCrimson
-                                        slicesOnDay.isNotEmpty() -> ObsidianSurfaceElevated
+                                        hasOverdue -> if (isNature) Color(0xFFEA580C) else CyberCrimson
+                                        slicesOnDay.isNotEmpty() -> if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
                                         else -> Color.Transparent
                                     }
                                 )
-                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
                         ) {
                             Text(
                                 text = if (slicesOnDay.isEmpty()) "—" else "${slicesOnDay.size} sl",
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 9.sp,
+                                fontSize = 8.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (hasOverdue) Color.White else CyberCyan
+                                color = if (hasOverdue) Color.White else (if (isNature) NatureLeafGreen else CyberCyan)
                             )
                         }
                     }

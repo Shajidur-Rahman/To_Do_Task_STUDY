@@ -89,6 +89,15 @@ interface StudyDao {
     )
     suspend fun getOverdueIncompleteSlicesOnce(todayEpochDay: Long): List<DailyTaskSlice>
 
+    @Query(
+        """
+        SELECT * FROM daily_task_slices 
+        WHERE isCompleted = 0 
+        ORDER BY scheduledDateEpochDay ASC, sliceNumber ASC
+        """
+    )
+    suspend fun getAllIncompleteSlicesOnce(): List<DailyTaskSlice>
+
     @Transaction
     @Query(
         """

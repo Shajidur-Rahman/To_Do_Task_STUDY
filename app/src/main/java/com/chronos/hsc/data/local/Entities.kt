@@ -59,8 +59,16 @@ data class DailyTaskSlice(
     val isRetentionEcho: Boolean = false,
     val echoIntervalDays: Int? = null,
     val sliceEnergyOverride: EnergyLevel? = null,
-    val xpMultiplier: Int = 1
+    val xpMultiplier: Int = 1,
+    val originalScheduledEpochDay: Long = scheduledDateEpochDay,
+    val shiftLagCount: Int = 0
 ) {
+    val effectiveLagDays: Int
+        get() = maxOf(shiftLagCount, (scheduledDateEpochDay - originalScheduledEpochDay).toInt().coerceAtLeast(0))
+
+    val isLagging: Boolean
+        get() = !isCompleted && effectiveLagDays > 0
+
     val problemProgressFraction: Float
         get() = when {
             isCompleted -> 1f
