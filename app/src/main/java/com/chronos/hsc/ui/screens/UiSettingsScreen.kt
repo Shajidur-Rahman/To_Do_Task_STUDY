@@ -52,6 +52,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chronos.hsc.ui.components.NatureAmbientOverlayCanvas
@@ -85,6 +87,7 @@ fun UiSettingsScreen(
     preferences: ThemePreferences,
     viewModel: StudyViewModel
 ) {
+    val haptic = LocalHapticFeedback.current
     val currentTheme by preferences.themeMode.collectAsState()
     val critterType by preferences.critterType.collectAsState()
     val foliageDensity by preferences.foliageDensity.collectAsState()
@@ -221,7 +224,10 @@ fun UiSettingsScreen(
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clickable { preferences.setCritterType(critter) }
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            preferences.setCritterType(critter)
+                                        }
                                 ) {
                                     Column(
                                         modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
@@ -237,6 +243,50 @@ fun UiSettingsScreen(
                                             maxLines = 1
                                         )
                                     }
+                                }
+                            }
+                        }
+
+                        // Live Interactive Companion Preview Stage
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = TerrariumSurfaceElevated,
+                            border = BorderStroke(1.dp, NatureLeafGreen.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .background(NatureLeafGreen.copy(alpha = 0.2f))
+                                        .border(1.dp, NatureLeafGreen, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = critterType.emoji, fontSize = 24.sp)
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${critterType.displayName} Activated",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = NatureSproutLime
+                                    )
+                                    Text(
+                                        text = when (critterType) {
+                                            NatureCritterType.POKA_INCHWORM -> "Crawls along the task perimeter & milestone vine"
+                                            NatureCritterType.FIREFLY -> "Illuminates study tasks with glowing trails & sparkles"
+                                            NatureCritterType.LADYBUG -> "Marches proudly along your daily study card borders"
+                                            NatureCritterType.HONEYBEE -> "Buzzes from flower to flower pollinating your chapter goals"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = TextSecondary
+                                    )
                                 }
                             }
                         }
@@ -263,7 +313,10 @@ fun UiSettingsScreen(
                                     ),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clickable { preferences.setFoliageDensity(density) }
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            preferences.setFoliageDensity(density)
+                                        }
                                 ) {
                                     Text(
                                         text = density.displayName.substringBefore(" ("),
@@ -276,6 +329,18 @@ fun UiSettingsScreen(
                                 }
                             }
                         }
+
+                        Text(
+                            text = when (foliageDensity) {
+                                FoliageDensity.LOW -> "🍃 8 Fireflies • Battery Saver minimal canopy"
+                                FoliageDensity.MEDIUM -> "🌿 18 Fireflies • Balanced swaying fern fronds"
+                                FoliageDensity.LUSH -> "🌲 30 Fireflies • Lush 4-corner canopy & drifting spores"
+                            },
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Medium,
+                            color = NatureFireflyGold
+                        )
 
                         // Ambient Glow Toggle
                         Row(

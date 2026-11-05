@@ -54,6 +54,7 @@ import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.brandColor
 import com.chronos.hsc.ui.theme.AppThemeMode
 import com.chronos.hsc.ui.theme.LocalAppThemeMode
+import com.chronos.hsc.ui.theme.LocalNatureCritterType
 import kotlin.math.max
 
 @Composable
@@ -72,7 +73,8 @@ fun BossHealthBar(
             currentBossHp = currentBossHp,
             modifier = modifier,
             compact = compact,
-            barHeight = barHeight
+            barHeight = barHeight,
+            critter = LocalNatureCritterType.current
         )
         return
     }
@@ -131,8 +133,8 @@ fun BossHealthBar(
                 Text(
                     text = when {
                         chain.isChainCompleted -> "⚔️ BOSS SLAIN"
-                        compact && hasPurpleShield -> "👹 BOSS HP"
-                        else -> "👹 CHAPTER BOSS HP"
+                        compact && hasPurpleShield -> "⚔️ BOSS HP"
+                        else -> "⚔️ CHAPTER BOSS HP"
                     },
                     fontSize = if (compact) 10.sp else 11.sp,
                     fontFamily = FontFamily.Monospace,

@@ -86,6 +86,8 @@ import com.chronos.hsc.ui.theme.TextSecondary
 import com.chronos.hsc.ui.theme.brandColor
 import com.chronos.hsc.ui.theme.AppThemeMode
 import com.chronos.hsc.ui.theme.LocalAppThemeMode
+import com.chronos.hsc.ui.theme.LocalNatureCritterType
+import com.chronos.hsc.ui.theme.NatureCritterType
 import com.chronos.hsc.ui.theme.NatureAutumnOrange
 import com.chronos.hsc.ui.theme.NatureCardShape
 import com.chronos.hsc.ui.theme.NatureFireflyGold
@@ -129,6 +131,7 @@ fun SwipeToSlashTaskCard(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
+    val critterType = LocalNatureCritterType.current
 
     var cardWidthPx by remember { mutableFloatStateOf(1000f) }
     var dragOffsetX by remember(slice.sliceId) { mutableFloatStateOf(0f) }
@@ -409,6 +412,27 @@ fun SwipeToSlashTaskCard(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+
+                        // Nature Critter Companion Badge
+                        if (isNature && !slice.isCompleted) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(NatureLeafGreen.copy(alpha = 0.18f))
+                                    .border(1.dp, NatureLeafGreen.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "${critterType.emoji} ${critterType.displayName.substringBefore(" ")}",
+                                    color = NatureSproutLime,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     // Lag Status Badge
                     if (slice.isLagging) {
@@ -742,9 +766,10 @@ fun SwipeToSlashTaskCard(
                 }
             }
 
-            // Nature Living Ladybug border companion along card perimeter
+            // Nature Living Critter border companion along card perimeter
             if (isNature && !slice.isCompleted) {
-                NatureLadybugBorder(
+                NatureCritterBorder(
+                    critter = critterType,
                     modifier = Modifier.matchParentSize()
                 )
             }

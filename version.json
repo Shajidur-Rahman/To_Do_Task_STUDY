@@ -1,6 +1,6 @@
 {
-  "versionCode": 9,
-  "versionName": "1.3.0",
+  "versionCode": 10,
+  "versionName": "1.3.1",
   "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/raw/main/Chronos_HSC_Smart_Study_Engine.apk",
-  "releaseNotes": "Chronos HSC v1.3.0: Dual-Theme Engine (Black Lover vs. Nature Lover with living terrarium, swaying ferns, glowing fireflies & crawling Poka inchworm/caterpillar), UI Settings tab, Mobile-First Compact HUD bar (48dp height) with collapsible Quick Command Deck & slim date scrubber saving 78%+ viewport, and Serious Lagging Pulse & Instant Catch-Up Engine."
+  "releaseNotes": "Chronos HSC v1.3.1: Replaced demon/horns icon with heroic ⚔️, fully activated Nature Ecosystem customizer with animated companion critter borders (Poka 🐛, Jonaki ✨, Ladybug 🐞, Honeybee 🐝), critter-driven milestone boss bar, live companion stage in UI Settings, and vibrant multi-tier foliage/firefly canopy."
 }

@@ -890,6 +890,25 @@ private fun CompactTopHudBar(
                     }
                 }
 
+                // Active Critter Companion Badge in Nature Mode
+                if (isNature) {
+                    val critter = LocalNatureCritterType.current
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = NatureLeafGreen.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, NatureLeafGreen.copy(alpha = 0.7f))
+                    ) {
+                        Text(
+                            text = "${critter.emoji} ${critter.displayName.substringBefore(" ")}",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp,
+                            color = NatureSproutLime,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
                 // Compact Battery Mode Pill (cycles on tap!)
                 val (modeLabel, modeColor) = when (selectedBatteryMode) {
                     EnergyLevel.HIGH_FOCUS -> "⚡100%" to primaryColor
@@ -1727,7 +1746,7 @@ private fun ActiveBossesMiniCarousel(
 ) {
     Column {
         Text(
-            text = "👹 ACTIVE SYLLABUS BOSSES (${activeChains.size})",
+            text = "⚔️ ACTIVE SYLLABUS BOSSES (${activeChains.size})",
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.ExtraBold,
             fontSize = 11.sp,
@@ -1918,7 +1937,7 @@ private fun ActiveChainsTab(
         item {
             Column {
                 Text(
-                    text = "👹 ACTIVE CHAINS & SYLLABUS BOSSES",
+                    text = "⚔️ ACTIVE CHAINS & SYLLABUS BOSSES",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 16.sp,

@@ -707,7 +707,7 @@ fun AddHscTopicModal(
                             color = subjectColor
                         )
                         Text(
-                            text = "👹 BOSS HP: ${selectedDays * 100}",
+                            text = "⚔️ BOSS HP: ${selectedDays * 100}",
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,

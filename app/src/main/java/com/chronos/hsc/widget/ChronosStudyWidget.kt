@@ -173,7 +173,7 @@ class ChronosStudyWidget : GlanceAppWidget() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "👹 Boss HP: ${activeItem.currentBossHp}/${chain.bossMaxHp}",
+                            text = "⚔️ Boss HP: ${activeItem.currentBossHp}/${chain.bossMaxHp}",
                             style = TextStyle(
                                 color = ColorProvider(Color(0xFFFF1744)),
                                 fontWeight = FontWeight.Medium,
