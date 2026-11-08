@@ -119,6 +119,7 @@ fun SwipeToSlashTaskCard(
     onIncrementProblem: () -> Unit,
     onDecrementProblem: () -> Unit = {},
     onCompleteSlice: () -> Unit,
+    onUncompleteSlice: () -> Unit = {},
     onPushDominoPlusOneDay: () -> Unit,
     onRequestDelete: () -> Unit,
     onCatchUpToToday: () -> Unit = {},
@@ -139,7 +140,11 @@ fun SwipeToSlashTaskCard(
     var isBursting by remember(slice.sliceId) { mutableStateOf(false) }
 
     val particles = remember(slice.sliceId) {
-        val palette = listOf(subjectColor, CyberEmerald, CyberCyan, CyberAmber, Color.White)
+        val palette = if (isNature) {
+            listOf(subjectColor, NatureLeafGreen, NatureSproutLime, NatureFireflyGold, Color.White)
+        } else {
+            listOf(Color.White, Color(0xFFE4E4E7), Color(0xFFA1A1AA), Color(0xFF71717A), subjectColor)
+        }
         List(28) { idx ->
             SlashParticle(
                 angleRad = (idx * (360f / 28f) + Random.nextFloat() * 12f) * (Math.PI.toFloat() / 180f),
@@ -163,7 +168,7 @@ fun SwipeToSlashTaskCard(
         label = "problemFillGradient"
     )
 
-    // Neon green border pulse when problemsCompleted == problemsTarget
+    // Border pulse when problemsCompleted == problemsTarget
     val infiniteTransition = rememberInfiniteTransition(label = "readyBorderPulse")
     val readyPulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.35f,
@@ -179,6 +184,7 @@ fun SwipeToSlashTaskCard(
     val swipeThresholdPx = (cardWidthPx * 0.28f).coerceIn(160f, 320f)
     val effectiveDragX = dragOffsetX
     val slashRatio = (effectiveDragX / swipeThresholdPx).coerceIn(0f, 1.15f)
+    val undoRatio = (-effectiveDragX / swipeThresholdPx).coerceIn(0f, 1.15f)
 
     fun triggerSlashCompletion() {
         if (slice.isCompleted) return
@@ -196,18 +202,26 @@ fun SwipeToSlashTaskCard(
         onCompleteSlice()
     }
 
+    fun triggerUndo() {
+        if (!slice.isCompleted) return
+        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        onUncompleteSlice()
+    }
+
     val defaultBorder = if (isNature) TerrariumBorder else ObsidianBorder
     val borderColor = when {
-        slice.isCompleted -> (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = 0.45f)
-        slashRatio >= 0.85f -> if (isNature) NatureLeafGreen else CyberEmerald
-        isReadyToSlash -> (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = readyPulseAlpha)
-        slice.isLagging -> (if (isNature) NatureLagRust else CyberCrimson).copy(alpha = 0.9f)
-        isOverdue -> (if (isNature) NatureAutumnOrange else CyberCrimson).copy(alpha = 0.85f)
-        slice.xpMultiplier > 1 -> (if (isNature) NatureFireflyGold else CyberAmber).copy(alpha = 0.85f)
+        slice.isCompleted -> (if (isNature) NatureLeafGreen else Color(0xFF3F3F46)).copy(alpha = 0.45f)
+        slashRatio >= 0.85f -> if (isNature) NatureLeafGreen else Color.White
+        undoRatio >= 0.85f -> if (isNature) NatureAutumnOrange else Color.White
+        isReadyToSlash -> if (isNature) NatureLeafGreen.copy(alpha = readyPulseAlpha) else Color.White.copy(alpha = readyPulseAlpha)
+        slice.isLagging -> (if (isNature) NatureLagRust else Color(0xFFE11D48)).copy(alpha = 0.9f)
+        isOverdue -> (if (isNature) NatureAutumnOrange else Color(0xFFF43F5E)).copy(alpha = 0.85f)
+        slice.xpMultiplier > 1 -> (if (isNature) NatureFireflyGold else Color.White).copy(alpha = 0.85f)
         else -> defaultBorder
     }
 
-    val borderWidth = if (isReadyToSlash || slashRatio > 0.2f || isOverdue || slice.isLagging) 1.6.dp else 1.dp
+    val borderWidth = if (isReadyToSlash || slashRatio > 0.2f || undoRatio > 0.2f || isOverdue || slice.isLagging) 1.6.dp else 1.dp
     val cardShape = if (isNature) NatureCardShape else RoundedCornerShape(16.dp)
     val cardSurfaceBg = if (isNature) TerrariumSurface else ObsidianSurface
 
@@ -220,7 +234,7 @@ fun SwipeToSlashTaskCard(
                 }
             }
     ) {
-        // Underlying Swipe-to-Slash track indicator
+        // Underlying Swipe-to-Slash track indicator (Swipe Right -> Complete)
         if (effectiveDragX > 6f) {
             Box(
                 modifier = Modifier
@@ -229,8 +243,8 @@ fun SwipeToSlashTaskCard(
                     .background(
                         Brush.horizontalGradient(
                             colors = listOf(
-                                (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = 0.32f),
-                                subjectColor.copy(alpha = 0.18f),
+                                (if (isNature) NatureLeafGreen else Color.White).copy(alpha = if (isNature) 0.32f else 0.16f),
+                                if (isNature) subjectColor.copy(alpha = 0.18f) else Color(0xFF27272A),
                                 cardSurfaceBg
                             )
                         )
@@ -245,7 +259,41 @@ fun SwipeToSlashTaskCard(
                         } else {
                             if (isNature) "🌱 SWIPE RIGHT TO HARVEST >>" else "🗡️ SWIPE RIGHT TO SLASH >>"
                         },
-                        color = if (slashRatio >= 1f) (if (isNature) NatureLeafGreen else CyberEmerald) else (if (isNature) NatureSproutLime else CyberCyan),
+                        color = if (slashRatio >= 1f) (if (isNature) NatureLeafGreen else Color.White) else (if (isNature) NatureSproutLime else Color(0xFFA1A1AA)),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        // Underlying Swipe-to-Undo track indicator (Swipe Left -> Restore / Undone)
+        if (effectiveDragX < -6f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(cardShape)
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                cardSurfaceBg,
+                                if (isNature) NatureAutumnOrange.copy(alpha = 0.25f) else Color(0xFF27272A),
+                                if (isNature) NatureLagRust.copy(alpha = 0.35f) else Color(0xFF3F3F46)
+                            )
+                        )
+                    )
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (undoRatio >= 1f) {
+                            if (isNature) "↩️ RELEASE TO RESTORE TASK!" else "↩️ RELEASE TO RESTORE (UNDONE)!"
+                        } else {
+                            if (isNature) "<< SWIPE LEFT TO UNDO ↩️" else "<< SWIPE LEFT TO UNDONE ↩️"
+                        },
+                        color = if (undoRatio >= 1f) Color.White else (if (isNature) NatureFireflyGold else Color(0xFFE4E4E7)),
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 12.sp
@@ -268,8 +316,8 @@ fun SwipeToSlashTaskCard(
                         drawRect(
                             brush = Brush.horizontalGradient(
                                 colors = listOf(
-                                    subjectColor.copy(alpha = if (slice.isCompleted) 0.20f else 0.24f),
-                                    (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = if (isReadyToSlash) 0.28f else 0.12f),
+                                    (if (isNature) subjectColor else Color(0xFF52525B)).copy(alpha = if (slice.isCompleted) 0.16f else 0.22f),
+                                    (if (isNature) NatureLeafGreen else Color.White).copy(alpha = if (isReadyToSlash) 0.24f else 0.10f),
                                     Color.Transparent
                                 ),
                                 startX = 0f,
@@ -279,9 +327,9 @@ fun SwipeToSlashTaskCard(
                             size = Size(fillWidth, size.height)
                         )
                     }
-                    // Left neon / sprout subject accent bar
+                    // Left neon / sprout / titanium subject accent bar
                     drawRect(
-                        color = if (slice.isCompleted) (if (isNature) NatureLeafGreen else CyberEmerald) else subjectColor,
+                        color = if (slice.isCompleted) (if (isNature) NatureLeafGreen else Color(0xFF52525B)) else (if (isNature) subjectColor else Color(0xFFD4D4D8)),
                         topLeft = Offset.Zero,
                         size = Size(5.dp.toPx(), size.height)
                     )
@@ -292,7 +340,6 @@ fun SwipeToSlashTaskCard(
                     shape = cardShape
                 )
                 .pointerInput(slice.sliceId, slice.isCompleted, swipeThresholdPx) {
-                    if (slice.isCompleted) return@pointerInput
                     detectHorizontalDragGestures(
                         onDragStart = {
                             view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -300,10 +347,15 @@ fun SwipeToSlashTaskCard(
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
                             val current = dragOffsetX
-                            val next = (current + dragAmount).coerceAtLeast(0f)
-                            val crossedThresholdNow = current < swipeThresholdPx && next >= swipeThresholdPx
+                            val next = if (slice.isCompleted) {
+                                (current + dragAmount).coerceAtMost(0f)
+                            } else {
+                                (current + dragAmount).coerceAtLeast(0f)
+                            }
+                            val crossedSlashThreshold = !slice.isCompleted && current < swipeThresholdPx && next >= swipeThresholdPx
+                            val crossedUndoThreshold = slice.isCompleted && current > -swipeThresholdPx && next <= -swipeThresholdPx
                             dragOffsetX = next
-                            if (crossedThresholdNow) {
+                            if (crossedSlashThreshold || crossedUndoThreshold) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             }
                         },
@@ -320,8 +372,10 @@ fun SwipeToSlashTaskCard(
                                     dragOffsetX = value
                                 }
                             }
-                            if (finalDrag >= swipeThresholdPx) {
+                            if (!slice.isCompleted && finalDrag >= swipeThresholdPx) {
                                 triggerSlashCompletion()
+                            } else if (slice.isCompleted && finalDrag <= -swipeThresholdPx) {
+                                triggerUndo()
                             }
                         },
                         onDragCancel = {
@@ -569,12 +623,16 @@ fun SwipeToSlashTaskCard(
                             Surface(
                                 shape = RoundedCornerShape(50),
                                 color = when {
-                                    slice.isCompleted || isTargetReached -> CyberEmerald.copy(alpha = 0.2f)
-                                    else -> ObsidianSurfaceElevated
+                                    slice.isCompleted || isTargetReached -> if (isNature) CyberEmerald.copy(alpha = 0.2f) else Color(0xFF27272A)
+                                    else -> if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
                                 },
                                 border = androidx.compose.foundation.BorderStroke(
                                     width = 1.dp,
-                                    color = if (isTargetReached) CyberEmerald else subjectColor.copy(alpha = 0.6f)
+                                    color = if (isTargetReached) {
+                                        if (isNature) CyberEmerald else Color.White
+                                    } else {
+                                        if (isNature) subjectColor.copy(alpha = 0.6f) else Color(0xFF3F3F46)
+                                    }
                                 )
                             ) {
                                 Row(
@@ -585,7 +643,7 @@ fun SwipeToSlashTaskCard(
                                         Icon(
                                             imageVector = Icons.Default.Remove,
                                             contentDescription = "Decrement Problem",
-                                            tint = TextSecondary,
+                                            tint = if (isNature) TextSecondary else Color(0xFFA1A1AA),
                                             modifier = Modifier
                                                 .size(16.dp)
                                                 .clickable {
@@ -609,7 +667,9 @@ fun SwipeToSlashTaskCard(
                                             fontSize = 11.sp,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isTargetReached) CyberEmerald else TextPrimary,
+                                            color = if (isTargetReached) {
+                                                if (isNature) CyberEmerald else Color.White
+                                            } else TextPrimary,
                                             maxLines = 1,
                                             softWrap = false
                                         )
@@ -618,7 +678,7 @@ fun SwipeToSlashTaskCard(
                                             Icon(
                                                 imageVector = Icons.Default.Add,
                                                 contentDescription = "Increment Problem",
-                                                tint = subjectColor,
+                                                tint = if (isNature) subjectColor else Color.White,
                                                 modifier = Modifier.size(15.dp)
                                             )
                                         }
@@ -631,10 +691,18 @@ fun SwipeToSlashTaskCard(
                         if (!slice.isCompleted) {
                             Surface(
                                 shape = RoundedCornerShape(50),
-                                color = if (isReadyToSlash) CyberEmerald else ObsidianSurfaceElevated,
+                                color = if (isReadyToSlash) {
+                                    if (isNature) CyberEmerald else Color.White
+                                } else {
+                                    if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
+                                },
                                 border = androidx.compose.foundation.BorderStroke(
                                     1.dp,
-                                    if (isReadyToSlash) CyberEmerald else CyberCyan.copy(alpha = 0.5f)
+                                    if (isReadyToSlash) {
+                                        if (isNature) CyberEmerald else Color.White
+                                    } else {
+                                        if (isNature) CyberCyan.copy(alpha = 0.5f) else Color(0xFF3F3F46)
+                                    }
                                 ),
                                 modifier = Modifier.clickable {
                                     triggerSlashCompletion()
@@ -647,7 +715,11 @@ fun SwipeToSlashTaskCard(
                                     Icon(
                                         imageVector = if (isReadyToSlash) Icons.Default.Bolt else Icons.Default.Check,
                                         contentDescription = "Slash Complete",
-                                        tint = if (isReadyToSlash) Color(0xFF00210E) else CyberCyan,
+                                        tint = if (isReadyToSlash) {
+                                            if (isNature) Color(0xFF00210E) else Color.Black
+                                        } else {
+                                            if (isNature) CyberCyan else Color.White
+                                        },
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
@@ -655,28 +727,43 @@ fun SwipeToSlashTaskCard(
                                         text = if (isReadyToSlash) "Slash!" else "Slash",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isReadyToSlash) Color(0xFF00210E) else CyberCyan,
+                                        color = if (isReadyToSlash) {
+                                            if (isNature) Color(0xFF00210E) else Color.Black
+                                        } else {
+                                            if (isNature) CyberCyan else Color.White
+                                        },
                                         maxLines = 1,
                                         softWrap = false
                                     )
                                 }
                             }
                         } else {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(CyberEmerald.copy(alpha = 0.16f))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            // Completed / Slashed badge (Tap or swipe left to restore/undone!)
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = if (isNature) NatureLeafGreen.copy(alpha = 0.16f) else Color(0xFF18181B),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isNature) NatureLeafGreen.copy(alpha = 0.5f) else Color(0xFF3A3A3C)
+                                ),
+                                modifier = Modifier.clickable {
+                                    triggerUndo()
+                                }
                             ) {
-                                Text(
-                                    text = "✅ SLASHED",
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CyberEmerald,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isNature) "✅ HARVESTED (Swipe Left ↩️)" else "✅ DONE (Swipe Left ↩️)",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isNature) NatureLeafGreen else Color(0xFFE4E4E7),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
                             }
                         }
                     }
@@ -686,8 +773,8 @@ fun SwipeToSlashTaskCard(
                         if (!slice.isCompleted && slice.isLagging) {
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = (if (isNature) NatureLeafGreen else CyberCyan).copy(alpha = 0.16f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isNature) NatureLeafGreen else CyberCyan),
+                                color = (if (isNature) NatureLeafGreen else Color.White).copy(alpha = if (isNature) 0.16f else 0.12f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isNature) NatureLeafGreen else Color.White),
                                 modifier = Modifier
                                     .clickable {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -700,11 +787,11 @@ fun SwipeToSlashTaskCard(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = if (isNature) "🌿 Catch Up" else "🚀 Catch Up",
+                                        text = if (isNature) "🌿 Catch Up" else "⚡ Catch Up",
                                         fontSize = 10.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = if (isNature) NatureLeafGreen else CyberCyan,
+                                        color = if (isNature) NatureLeafGreen else Color.White,
                                         maxLines = 1,
                                         softWrap = false
                                     )
@@ -717,6 +804,7 @@ fun SwipeToSlashTaskCard(
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
                                 color = if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isNature) TerrariumBorder else Color(0xFF27272A)),
                                 modifier = Modifier
                                     .clickable {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -731,7 +819,7 @@ fun SwipeToSlashTaskCard(
                                     Icon(
                                         imageVector = Icons.Default.FastForward,
                                         contentDescription = "Push Domino +1 Day",
-                                        tint = if (isNature) NatureSproutLime else CyberAmber,
+                                        tint = if (isNature) NatureSproutLime else Color(0xFFA1A1AA),
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
@@ -740,9 +828,7 @@ fun SwipeToSlashTaskCard(
                                         fontSize = 10.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isNature) NatureSproutLime else CyberAmber,
-                                        maxLines = 1,
-                                        softWrap = false
+                                        color = if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
                                     )
                                 }
                             }

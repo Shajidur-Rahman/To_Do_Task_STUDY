@@ -230,7 +230,8 @@ class StudyRepository(
         startDateEpochDay: Long,
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
-        energyLevel: EnergyLevel
+        energyLevel: EnergyLevel,
+        linkedPreviousChainId: String? = null
     ): StudyTopicChain {
         val effectivePaper = if (subject.isSinglePaperOnly) HscPaper.SINGLE else paper
         val safeTotalDays = totalDays.coerceIn(1, 15)
@@ -254,7 +255,8 @@ class StudyRepository(
             createdAtEpochDay = LocalDate.now().toEpochDay(),
             bossMaxHp = bossMaxHp,
             bossBonusShieldHp = 0,
-            isChainCompleted = false
+            isChainCompleted = false,
+            linkedPreviousChainId = linkedPreviousChainId
         )
 
         val slices = (1..safeTotalDays).map { dayIndex ->
@@ -436,6 +438,7 @@ class StudyRepository(
                         }
                         dao.updateSlices(shiftedCore)
                         totalSlicesShifted += shiftedCore.size
+                        totalSlicesShifted += shiftDownstreamLinkedChains(chainId, delta)
                     }
                 }
             }
@@ -466,8 +469,37 @@ class StudyRepository(
     }
 
     /**
+     * Recursively shifts all downstream chains linked to [chainId] forward by [deltaDays].
+     * Ensures that if Chain B is linked to Chain A, whenever Chain A shifts (+1d or overdue jump),
+     * Chain B and all downstream linked chains shift forward together, preserving the
+     * whole syllabus pipeline without overlapping.
+     */
+    suspend fun shiftDownstreamLinkedChains(chainId: String, deltaDays: Long): Int {
+        if (deltaDays <= 0L) return 0
+        var totalShifted = 0
+        val downstreamChains = dao.getDownstreamLinkedChains(chainId)
+        for (downstream in downstreamChains) {
+            val incompleteSlices = dao.getIncompleteSlicesForChain(downstream.chainId)
+            if (incompleteSlices.isNotEmpty()) {
+                val shiftedSlices = incompleteSlices.map { slice ->
+                    slice.copy(
+                        scheduledDateEpochDay = slice.scheduledDateEpochDay + deltaDays,
+                        shiftLagCount = slice.shiftLagCount + deltaDays.toInt()
+                    )
+                }
+                dao.updateSlices(shiftedSlices)
+                totalShifted += shiftedSlices.size
+            }
+            // Recurse to any chains linked to this downstream chain
+            totalShifted += shiftDownstreamLinkedChains(downstream.chainId, deltaDays)
+        }
+        return totalShifted
+    }
+
+    /**
      * Per-Card "Push Domino (+1 Day)":
      * Shifts the selected slice and all subsequent incomplete slices in that chain forward by +1 day.
+     * Also pushes any downstream linked chapter chains forward by +1 day.
      */
     suspend fun pushSliceDominoPlusOneDay(sliceId: String): Int {
         val targetSlice = dao.getSliceById(sliceId) ?: return 0
@@ -496,9 +528,10 @@ class StudyRepository(
             )
         }
         dao.updateSlices(updated)
+        val downstreamShifted = shiftDownstreamLinkedChains(targetSlice.chainId, 1L)
         syncOverdueBossShields(LocalDate.now().toEpochDay())
         ChronosWidgetUpdater.requestUpdate(appContext)
-        return updated.size
+        return updated.size + downstreamShifted
     }
 
     /**
@@ -692,6 +725,38 @@ class StudyRepository(
             xpEarned = totalAwardedXp,
             didConquerFinalCoreSlice = didConquerFinalCoreSlice
         )
+    }
+
+    /**
+     * Slide-to-Left / Revert Task Completion (Undone):
+     * Restores a completed slice back to incomplete, resets completion timestamp,
+     * adjusts user XP (-50 XP), and re-opens parent chain if needed.
+     */
+    suspend fun uncompleteTaskSlice(sliceId: String): DailyTaskSlice? {
+        val slice = dao.getSliceById(sliceId) ?: return null
+        if (!slice.isCompleted) return slice
+
+        val uncompletedSlice = slice.copy(
+            isCompleted = false,
+            completedAtTimestamp = null
+        )
+        dao.updateSlice(uncompletedSlice)
+
+        val chainWithSlices = dao.getChainWithSlices(slice.chainId)
+        if (chainWithSlices != null) {
+            val parentChain = chainWithSlices.chain
+            val hasIncompleteCore = chainWithSlices.coreSlices.any { !it.isCompleted || it.sliceId == sliceId }
+            if (hasIncompleteCore && parentChain.isChainCompleted) {
+                dao.updateChain(parentChain.copy(isChainCompleted = false))
+            }
+        }
+
+        // Deduct base slice XP
+        val baseCompletionXp = 50 * slice.xpMultiplier
+        awardXp(-baseCompletionXp)
+
+        ChronosWidgetUpdater.requestUpdate(appContext)
+        return uncompletedSlice
     }
 
     /**

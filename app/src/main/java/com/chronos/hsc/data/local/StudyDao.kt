@@ -143,6 +143,9 @@ interface StudyDao {
     @Query("DELETE FROM study_topic_chains WHERE chainId = :chainId")
     suspend fun deleteTopicChainById(chainId: String)
 
+    @Query("SELECT * FROM study_topic_chains WHERE linkedPreviousChainId = :chainId")
+    suspend fun getDownstreamLinkedChains(chainId: String): List<StudyTopicChain>
+
     @Query("DELETE FROM daily_task_slices WHERE sliceId = :sliceId")
     suspend fun deleteSliceById(sliceId: String)
 

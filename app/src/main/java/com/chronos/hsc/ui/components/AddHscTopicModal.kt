@@ -45,7 +45,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -66,6 +68,7 @@ import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
 import com.chronos.hsc.data.local.HscSyllabusCatalog
+import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.repository.StudyRepository
 import com.chronos.hsc.ui.theme.CyberCyan
 import com.chronos.hsc.ui.theme.CyberEmerald
@@ -87,6 +90,7 @@ import java.time.format.DateTimeFormatter
 fun AddHscTopicModal(
     todayEpochDay: Long,
     initialSelectedDateEpochDay: Long,
+    existingChains: List<StudyTopicChain> = emptyList(),
     onDismiss: () -> Unit,
     onGenerateChain: (
         subject: HscSubject,
@@ -97,7 +101,8 @@ fun AddHscTopicModal(
         startDateEpochDay: Long,
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
-        energyLevel: EnergyLevel
+        energyLevel: EnergyLevel,
+        linkedPreviousChainId: String?
     ) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -129,6 +134,22 @@ fun AddHscTopicModal(
     }
     val subjectColor = selectedSubject.brandColor()
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
+
+    val matchingChains = remember(existingChains, selectedSubject, effectivePaper) {
+        existingChains.filter { it.subject == selectedSubject && it.paper == effectivePaper }
+    }
+    var linkWithPreviousChain by remember { mutableStateOf(false) }
+    var selectedLinkedChainId by remember { mutableStateOf<String?>(null) }
+    var isTestPaperSolving by remember { mutableStateOf(false) }
+
+    LaunchedEffect(matchingChains) {
+        if (matchingChains.isNotEmpty() && (selectedLinkedChainId == null || matchingChains.none { it.chainId == selectedLinkedChainId })) {
+            selectedLinkedChainId = matchingChains.last().chainId
+        } else if (matchingChains.isEmpty()) {
+            selectedLinkedChainId = null
+            linkWithPreviousChain = false
+        }
+    }
 
     if (showDatePickerDialog) {
         key(startDateEpochDay) {
@@ -450,7 +471,7 @@ fun AddHscTopicModal(
                 value = chapterTitle,
                 onValueChange = { chapterTitle = it },
                 label = { Text("অধ্যায়ের নাম / নির্দিষ্ট টপিক (Chapter Title in Bangla)") },
-                placeholder = { Text("যেমন: ভৌত জগৎ ও পরিমাপ, ভেক্টর, জৈব রসায়ন...") },
+                placeholder = { Text("যেমন: ভৌত জগৎ ও পরিমাপ, ভেক্টর, টেস্ট পেপার সমাধান...") },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = subjectColor,
@@ -460,6 +481,179 @@ fun AddHscTopicModal(
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Quick Suffix/Type Selector: Test Paper Solving (টেস্ট পেপার সমাধান), Board CQ/MCQ, etc.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isTestPaperSolving) subjectColor.copy(alpha = 0.22f) else ObsidianSurfaceElevated,
+                    border = BorderStroke(1.dp, if (isTestPaperSolving) subjectColor else ObsidianBorder),
+                    modifier = Modifier.clickable {
+                        isTestPaperSolving = !isTestPaperSolving
+                        val tag = " (টেস্ট পেপার সমাধান)"
+                        if (isTestPaperSolving) {
+                            if (!chapterTitle.contains("টেস্ট পেপার")) {
+                                chapterTitle = "${chapterTitle.trim()}$tag"
+                            }
+                        } else {
+                            chapterTitle = chapterTitle.replace(tag, "").replace(" (টেস্ট পেপার সমাধান)", "").trim()
+                        }
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isTestPaperSolving) "✓ টেস্ট পেপার সমাধান" else "📝 টেস্ট পেপার সমাধান (Test Paper)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp,
+                            color = if (isTestPaperSolving) subjectColor else TextPrimary
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = ObsidianSurfaceElevated,
+                    border = BorderStroke(1.dp, ObsidianBorder),
+                    modifier = Modifier.clickable {
+                        val tag = " [বোর্ড CQ/MCQ]"
+                        if (!chapterTitle.contains("বোর্ড")) {
+                            chapterTitle = "${chapterTitle.trim()}$tag"
+                        }
+                    }
+                ) {
+                    Text(
+                        text = "+ বোর্ড CQ/MCQ",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Link with Previous Chapter Chain (Automatic Domino Cascading)
+            if (matchingChains.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(14.dp))
+                SectionLabel("LINK WITH PREVIOUS CHAPTER CHAIN")
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (linkWithPreviousChain) subjectColor.copy(alpha = 0.16f) else ObsidianSurfaceElevated,
+                    border = BorderStroke(1.dp, if (linkWithPreviousChain) subjectColor else ObsidianBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            linkWithPreviousChain = !linkWithPreviousChain
+                            if (linkWithPreviousChain && selectedLinkedChainId == null) {
+                                selectedLinkedChainId = matchingChains.last().chainId
+                            }
+                            if (linkWithPreviousChain && selectedLinkedChainId != null) {
+                                val targetChain = matchingChains.find { it.chainId == selectedLinkedChainId }
+                                if (targetChain != null) {
+                                    val chainEndDay = targetChain.createdAtEpochDay + targetChain.totalDays
+                                    if (chainEndDay >= todayEpochDay) {
+                                        startDateEpochDay = chainEndDay
+                                    }
+                                }
+                            }
+                        }
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Link,
+                                    contentDescription = null,
+                                    tint = if (linkWithPreviousChain) subjectColor else TextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Column {
+                                    Text(
+                                        text = "Link with previous chapter chain",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp,
+                                        color = if (linkWithPreviousChain) TextPrimary else TextSecondary
+                                    )
+                                    Text(
+                                        text = "Missed days & Domino Shifts cascade down the study pipeline",
+                                        fontSize = 10.5.sp,
+                                        color = TextMuted
+                                    )
+                                }
+                            }
+                            Text(
+                                text = if (linkWithPreviousChain) "LINKED 🔗" else "OFF",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp,
+                                color = if (linkWithPreviousChain) subjectColor else TextMuted
+                            )
+                        }
+
+                        if (linkWithPreviousChain && matchingChains.size > 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Select previous chain to link with:",
+                                fontSize = 11.sp,
+                                color = TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            matchingChains.forEach { prevChain ->
+                                val isChainSelected = prevChain.chainId == selectedLinkedChainId
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isChainSelected) subjectColor.copy(alpha = 0.22f) else ObsidianBackground,
+                                    border = BorderStroke(1.dp, if (isChainSelected) subjectColor else ObsidianBorder),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                        .clickable {
+                                            selectedLinkedChainId = prevChain.chainId
+                                            val chainEndDay = prevChain.createdAtEpochDay + prevChain.totalDays
+                                            if (chainEndDay >= todayEpochDay) {
+                                                startDateEpochDay = chainEndDay
+                                            }
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${prevChain.chapterName.ifEmpty { "অধ্যায় ${prevChain.chapterNumber}" }} (${prevChain.totalDays}d)",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (isChainSelected) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isChainSelected) TextPrimary else TextSecondary
+                                        )
+                                        if (isChainSelected) {
+                                            Text("✓ Linked", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = subjectColor)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -757,7 +951,8 @@ fun AddHscTopicModal(
                         startDateEpochDay,
                         selectedCurve,
                         dailyProblems,
-                        selectedEnergy
+                        selectedEnergy,
+                        if (linkWithPreviousChain) selectedLinkedChainId else null
                     )
                 },
                 colors = ButtonDefaults.buttonColors(

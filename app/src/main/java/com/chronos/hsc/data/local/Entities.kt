@@ -24,7 +24,8 @@ data class StudyTopicChain(
     val createdAtEpochDay: Long,
     val bossMaxHp: Int,
     val bossBonusShieldHp: Int = 0,
-    val isChainCompleted: Boolean = false
+    val isChainCompleted: Boolean = false,
+    val linkedPreviousChainId: String? = null
 )
 
 @Entity(

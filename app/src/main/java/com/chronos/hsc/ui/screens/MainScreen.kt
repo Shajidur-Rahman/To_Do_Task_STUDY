@@ -307,6 +307,7 @@ fun MainScreen(
                         onIncrementProblem = viewModel::incrementProblemSubCounter,
                         onDecrementProblem = viewModel::decrementProblemSubCounter,
                         onCompleteSlice = viewModel::completeTaskSlice,
+                        onUncompleteSlice = viewModel::uncompleteTaskSlice,
                         onPushDominoPlusOne = viewModel::pushSliceDominoPlusOneDay,
                         onRequestDeleteSlice = viewModel::requestDeleteForSlice,
                         onConvertHiddenToLightReview = viewModel::convertHiddenSliceToLightReview,
@@ -350,6 +351,7 @@ fun MainScreen(
             AddHscTopicModal(
                 todayEpochDay = state.todayEpochDay,
                 initialSelectedDateEpochDay = state.selectedDateEpochDay,
+                existingChains = state.allChainsWithSlices.map { it.chain },
                 onDismiss = viewModel::closeAddTopicModal,
                 onGenerateChain = viewModel::createStructuredTopicChain
             )
@@ -558,6 +560,7 @@ private fun TodayBattlegroundTab(
     onIncrementProblem: (String) -> Unit,
     onDecrementProblem: (String) -> Unit,
     onCompleteSlice: (String) -> Unit,
+    onUncompleteSlice: (String) -> Unit = {},
     onPushDominoPlusOne: (SliceWithParentChain) -> Unit,
     onRequestDeleteSlice: (SliceWithParentChain) -> Unit,
     onConvertHiddenToLightReview: (String) -> Unit,
@@ -693,7 +696,7 @@ private fun TodayBattlegroundTab(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 12.sp,
-                        color = if (isNature) NatureLeafGreen else CyberCyan
+                        color = if (isNature) NatureLeafGreen else Color.White
                     )
                     Text(
                         text = "${state.visibleDateSlices.count { it.slice.isCompleted }}/${state.visibleDateSlices.size} Done",
@@ -772,6 +775,7 @@ private fun TodayBattlegroundTab(
                         onIncrementProblem = { onIncrementProblem(sliceWithChain.slice.sliceId) },
                         onDecrementProblem = { onDecrementProblem(sliceWithChain.slice.sliceId) },
                         onCompleteSlice = { onCompleteSlice(sliceWithChain.slice.sliceId) },
+                        onUncompleteSlice = { onUncompleteSlice(sliceWithChain.slice.sliceId) },
                         onPushDominoPlusOneDay = { onPushDominoPlusOne(sliceWithChain) },
                         onRequestDelete = { onRequestDeleteSlice(sliceWithChain) },
                         onCatchUpToToday = { onCatchUpSlice(sliceWithChain.slice.sliceId) }
@@ -805,8 +809,8 @@ private fun CompactTopHudBar(
     onCycleBatteryMode: () -> Unit,
     onOpenUpdate: () -> Unit
 ) {
-    val primaryColor = if (isNature) NatureLeafGreen else CyberCyan
-    val secondaryColor = if (isNature) NatureSproutLime else CyberMagenta
+    val primaryColor = if (isNature) NatureLeafGreen else Color.White
+    val secondaryColor = if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
     val surfaceBg = if (isNature) TerrariumSurface else ObsidianSurface
     val borderCol = if (isNature) TerrariumBorder else ObsidianBorder
 
@@ -840,8 +844,8 @@ private fun CompactTopHudBar(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .background(secondaryColor.copy(alpha = 0.2f))
-                        .border(1.dp, secondaryColor.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                        .background(if (isNature) secondaryColor.copy(alpha = 0.2f) else Color(0xFF18181B))
+                        .border(1.dp, if (isNature) secondaryColor.copy(alpha = 0.7f) else Color(0xFF3F3F46), RoundedCornerShape(6.dp))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
                 ) {
                     Text(
@@ -873,8 +877,8 @@ private fun CompactTopHudBar(
                 // Streak Badge
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = CyberOrange.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, CyberOrange.copy(alpha = 0.7f))
+                    color = if (isNature) CyberOrange.copy(alpha = 0.16f) else Color(0xFF18181B),
+                    border = BorderStroke(1.dp, if (isNature) CyberOrange.copy(alpha = 0.7f) else Color(0xFF3F3F46))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
@@ -885,7 +889,7 @@ private fun CompactTopHudBar(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
-                            color = CyberOrange
+                            color = if (isNature) CyberOrange else Color(0xFFE4E4E7)
                         )
                     }
                 }
@@ -911,14 +915,14 @@ private fun CompactTopHudBar(
 
                 // Compact Battery Mode Pill (cycles on tap!)
                 val (modeLabel, modeColor) = when (selectedBatteryMode) {
-                    EnergyLevel.HIGH_FOCUS -> "⚡100%" to primaryColor
-                    EnergyLevel.MEDIUM -> "🔋50%" to CyberAmber
-                    EnergyLevel.ZOMBIE_MODE -> "🧟15%" to CyberEmerald
+                    EnergyLevel.HIGH_FOCUS -> "⚡100%" to (if (isNature) primaryColor else Color.White)
+                    EnergyLevel.MEDIUM -> "🔋50%" to (if (isNature) CyberAmber else Color(0xFFE4E4E7))
+                    EnergyLevel.ZOMBIE_MODE -> "🧟15%" to (if (isNature) CyberEmerald else Color(0xFFA1A1AA))
                 }
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = modeColor.copy(alpha = 0.18f),
-                    border = BorderStroke(1.dp, modeColor),
+                    color = if (isNature) modeColor.copy(alpha = 0.18f) else Color(0xFF27272A),
+                    border = BorderStroke(1.dp, if (isNature) modeColor else Color(0xFF52525B)),
                     modifier = Modifier.clickable { onCycleBatteryMode() }
                 ) {
                     Text(
@@ -940,8 +944,8 @@ private fun CompactTopHudBar(
                 if (isUpdateAvailable) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = CyberEmerald.copy(alpha = 0.25f),
-                        border = BorderStroke(1.dp, CyberEmerald),
+                        color = (if (isNature) CyberEmerald else Color.White).copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, if (isNature) CyberEmerald else Color.White),
                         modifier = Modifier.clickable { onOpenUpdate() }
                     ) {
                         Text(
@@ -949,7 +953,7 @@ private fun CompactTopHudBar(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 9.sp,
-                            color = CyberEmerald,
+                            color = if (isNature) CyberEmerald else Color.White,
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
                         )
                     }
@@ -958,7 +962,7 @@ private fun CompactTopHudBar(
                 // 🎛️ Tools Toggle Button
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = if (isToolsExpanded) primaryColor.copy(alpha = 0.25f) else (if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated),
+                    color = if (isToolsExpanded) primaryColor.copy(alpha = 0.22f) else (if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated),
                     border = BorderStroke(1.dp, if (isToolsExpanded) primaryColor else borderCol),
                     modifier = Modifier.clickable { onToggleTools() }
                 ) {
@@ -990,8 +994,8 @@ private fun CollapsibleQuickCommandDeck(
     onInstantCatchUpAll: () -> Unit,
     onOpenUpdate: () -> Unit
 ) {
-    val primaryColor = if (isNature) NatureLeafGreen else CyberCyan
-    val secondaryColor = if (isNature) NatureSproutLime else CyberMagenta
+    val primaryColor = if (isNature) NatureLeafGreen else Color.White
+    val secondaryColor = if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
     val surfaceBg = if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
     val borderCol = if (isNature) TerrariumBorder else ObsidianBorder
 
@@ -1012,53 +1016,68 @@ private fun CollapsibleQuickCommandDeck(
             // 🎲 Spin Roulette
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = secondaryColor.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, secondaryColor.copy(alpha = 0.7f)),
+                color = if (isNature) secondaryColor.copy(alpha = 0.16f) else Color(0xFF18181B),
+                border = BorderStroke(1.dp, if (isNature) secondaryColor.copy(alpha = 0.7f) else Color(0xFF3F3F46)),
                 modifier = Modifier.clickable { onOpenRoulette() }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "🎲 Spin Roulette", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = secondaryColor)
+                    Text(
+                        text = "🎲 Spin Roulette",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isNature) secondaryColor else Color.White
+                    )
                 }
             }
 
             // 🧠 60s Reset
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = CyberCyan.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.6f)),
+                color = if (isNature) CyberCyan.copy(alpha = 0.14f) else Color(0xFF18181B),
+                border = BorderStroke(1.dp, if (isNature) CyberCyan.copy(alpha = 0.6f) else Color(0xFF3F3F46)),
                 modifier = Modifier.clickable { onOpenNeuroGymQuickRescue() }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "🧠 60s Focus Reset", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CyberCyan)
+                    Text(
+                        text = "🧠 60s Focus Reset",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isNature) CyberCyan else Color.White
+                    )
                 }
             }
 
             // 🎴 Card & Backup
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = primaryColor.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.6f)),
+                color = if (isNature) primaryColor.copy(alpha = 0.14f) else Color(0xFF18181B),
+                border = BorderStroke(1.dp, if (isNature) primaryColor.copy(alpha = 0.6f) else Color(0xFF3F3F46)),
                 modifier = Modifier.clickable { onOpenAccountability() }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "🎴 Card & Backup", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = primaryColor)
+                    Text(
+                        text = "🎴 Card & Backup",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isNature) primaryColor else Color.White
+                    )
                 }
             }
 
-            // 🚀 Catch Up All
+            // ⚡ Catch Up All
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = CyberAmber.copy(alpha = 0.14f),
-                border = BorderStroke(1.dp, CyberAmber.copy(alpha = 0.7f)),
+                color = if (isNature) CyberAmber.copy(alpha = 0.14f) else Color(0xFF18181B),
+                border = BorderStroke(1.dp, if (isNature) CyberAmber.copy(alpha = 0.7f) else Color(0xFF3F3F46)),
                 modifier = Modifier.clickable { onInstantCatchUpAll() }
             ) {
                 Row(
@@ -1066,10 +1085,10 @@ private fun CollapsibleQuickCommandDeck(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isNature) "🌿 Catch Up All" else "🚀 Catch Up All",
+                        text = if (isNature) "🌿 Catch Up All" else "⚡ Catch Up All",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = CyberAmber
+                        color = if (isNature) CyberAmber else Color.White
                     )
                 }
             }
@@ -1609,8 +1628,8 @@ private fun DateScrubberAndRouletteSection(
             ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = (if (isNature) NatureLeafGreen else CyberEmerald).copy(alpha = 0.18f),
-                    border = BorderStroke(1.dp, if (isNature) NatureLeafGreen else CyberEmerald),
+                    color = (if (isNature) NatureLeafGreen else Color.White).copy(alpha = if (isNature) 0.18f else 0.12f),
+                    border = BorderStroke(1.dp, if (isNature) NatureLeafGreen else Color.White),
                     modifier = Modifier.clickable { onSelectDate(todayEpochDay) }
                 ) {
                     Row(
@@ -1620,7 +1639,7 @@ private fun DateScrubberAndRouletteSection(
                         Icon(
                             imageVector = Icons.Default.Today,
                             contentDescription = "Jump to Today",
-                            tint = if (isNature) NatureLeafGreen else CyberEmerald,
+                            tint = if (isNature) NatureLeafGreen else Color.White,
                             modifier = Modifier.size(13.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -1628,7 +1647,7 @@ private fun DateScrubberAndRouletteSection(
                             text = "Jump Back to Today",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (isNature) NatureLeafGreen else CyberEmerald
+                            color = if (isNature) NatureLeafGreen else Color.White
                         )
                     }
                 }
@@ -1662,15 +1681,15 @@ private fun DateScrubberAndRouletteSection(
                 val hasOverdue = dayEpoch < todayEpochDay && incompleteCount > 0
 
                 val cardSurface = when {
-                    isSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else CyberCyan.copy(alpha = 0.22f)
-                    hasOverdue -> if (isNature) Color(0xFF331610) else CyberCrimson.copy(alpha = 0.16f)
+                    isSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else Color(0xFF27272A)
+                    hasOverdue -> if (isNature) Color(0xFF331610) else Color(0xFF231015)
                     else -> if (isNature) TerrariumSurface else ObsidianSurface
                 }
 
                 val cardBorder = when {
-                    isSelected -> if (isNature) NatureLeafGreen else CyberCyan
-                    hasOverdue -> if (isNature) Color(0xFFEA580C) else CyberCrimson
-                    isToday -> if (isNature) NatureSproutLime.copy(alpha = 0.7f) else CyberEmerald.copy(alpha = 0.6f)
+                    isSelected -> if (isNature) NatureLeafGreen else Color.White
+                    hasOverdue -> if (isNature) Color(0xFFEA580C) else Color(0xFFF43F5E)
+                    isToday -> if (isNature) NatureSproutLime.copy(alpha = 0.7f) else Color(0xFF52525B)
                     else -> if (isNature) TerrariumBorder else ObsidianBorder
                 }
 
@@ -1695,8 +1714,8 @@ private fun DateScrubberAndRouletteSection(
                             fontWeight = FontWeight.Bold,
                             fontSize = if (isCompact) 8.5.sp else 9.sp,
                             color = when {
-                                isSelected -> if (isNature) NatureLeafGreen else CyberCyan
-                                isToday -> if (isNature) NatureSproutLime else CyberEmerald
+                                isSelected -> if (isNature) NatureLeafGreen else Color.White
+                                isToday -> if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
                                 else -> TextSecondary
                             }
                         )

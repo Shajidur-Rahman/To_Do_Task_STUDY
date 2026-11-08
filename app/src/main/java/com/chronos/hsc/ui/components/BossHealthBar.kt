@@ -139,7 +139,7 @@ fun BossHealthBar(
                     fontSize = if (compact) 10.sp else 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (chain.isChainCompleted) CyberEmerald else CyberCrimson,
+                    color = if (chain.isChainCompleted) Color(0xFFA1A1AA) else Color.White,
                     maxLines = 1,
                     softWrap = false
                 )
@@ -148,10 +148,10 @@ fun BossHealthBar(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(BossShieldPurple.copy(alpha = 0.22f))
+                            .background(Color(0xFF27272A))
                             .border(
                                 width = 1.dp,
-                                color = BossShieldPurple.copy(alpha = shieldPulseAlpha),
+                                color = Color(0xFF71717A).copy(alpha = shieldPulseAlpha),
                                 shape = RoundedCornerShape(4.dp)
                             )
                             .padding(horizontal = 5.dp, vertical = 1.dp)
@@ -161,7 +161,7 @@ fun BossHealthBar(
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFEA80FC),
+                            color = Color(0xFFE4E4E7),
                             maxLines = 1,
                             softWrap = false
                         )
@@ -180,7 +180,7 @@ fun BossHealthBar(
                 fontSize = if (compact) 10.sp else 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                color = if (currentBossHp == 0) CyberEmerald else TextPrimary,
+                color = if (currentBossHp == 0) Color(0xFFA1A1AA) else TextPrimary,
                 maxLines = 1,
                 softWrap = false
             )
@@ -196,7 +196,7 @@ fun BossHealthBar(
                 .background(ObsidianBackground)
                 .border(
                     width = 1.dp,
-                    color = if (hasPurpleShield) BossShieldPurple.copy(alpha = shieldPulseAlpha) else ObsidianBorder,
+                    color = if (hasPurpleShield) Color(0xFF71717A).copy(alpha = shieldPulseAlpha) else ObsidianBorder,
                     shape = RoundedCornerShape(4.dp)
                 )
         ) {
@@ -213,7 +213,7 @@ fun BossHealthBar(
 
                 // Segment empty track
                 drawRoundRect(
-                    color = Color(0xFF161C2E),
+                    color = Color(0xFF18181B),
                     topLeft = Offset(startX, 0f),
                     size = Size(segmentWidth, size.height),
                     cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
@@ -224,13 +224,13 @@ fun BossHealthBar(
                     val barBrush = if (remainingRatio < 1f) {
                         // Taking chip damage from problem sub-counter!
                         Brush.horizontalGradient(
-                            colors = listOf(CyberOrange, CyberCrimson),
+                            colors = listOf(Color(0xFFE4E4E7), Color(0xFFA1A1AA)),
                             startX = startX,
                             endX = startX + fillWidth
                         )
                     } else {
                         Brush.horizontalGradient(
-                            colors = listOf(CyberCrimson, subjectColor),
+                            colors = listOf(Color.White, Color(0xFFD4D4D8)),
                             startX = startX,
                             endX = startX + fillWidth
                         )
@@ -245,7 +245,7 @@ fun BossHealthBar(
                 } else {
                     // Slashed / Depleted segment indicator
                     drawLine(
-                        color = CyberEmerald.copy(alpha = 0.7f),
+                        color = Color(0xFF71717A),
                         start = Offset(startX + 4f, size.height - 2f),
                         end = Offset(startX + segmentWidth - 4f, 2f),
                         strokeWidth = 1.5.dp.toPx(),

@@ -66,16 +66,16 @@ object ChronosThemeTokens {
 
     @Composable
     fun primaryAccent(): Color {
-        return if (isNature()) NatureLeafGreen else CyberCyan
+        return if (isNature()) NatureLeafGreen else Color.White
     }
 
     @Composable
     fun secondaryAccent(): Color {
-        return if (isNature()) NatureSproutLime else CyberMagenta
+        return if (isNature()) NatureSproutLime else MonoTitanium
     }
 
     @Composable
     fun lagBadgeColor(): Color {
-        return if (isNature()) NatureLagRust else CyberCrimson
+        return if (isNature()) NatureLagRust else Color(0xFFE11D48)
     }
 }

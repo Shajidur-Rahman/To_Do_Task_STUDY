@@ -3,14 +3,21 @@ package com.chronos.hsc.ui.theme
 import androidx.compose.ui.graphics.Color
 import com.chronos.hsc.data.local.HscSubject
 
-// Obsidian & Cyberpunk Surface Palette
-val ObsidianBackground = Color(0xFF07090E)
-val ObsidianSurface = Color(0xFF10141F)
-val ObsidianSurfaceElevated = Color(0xFF171D2D)
-val ObsidianSurfaceHighlight = Color(0xFF20283E)
-val ObsidianBorder = Color(0xFF28324E)
+// Pure Obsidian & Minimalist Black Surface Palette (Serious study mood, pitch black OLED)
+val ObsidianBackground = Color(0xFF000000)
+val ObsidianSurface = Color(0xFF0C0C0C)
+val ObsidianSurfaceElevated = Color(0xFF161616)
+val ObsidianSurfaceHighlight = Color(0xFF222222)
+val ObsidianBorder = Color(0xFF27272A)
 
-// Primary Cyber Accents
+// Monochrome & Minimalist Accents (Serious Black & White Study Engine)
+val MonoWhite = Color(0xFFFFFFFF)
+val MonoSilver = Color(0xFFE4E4E7)
+val MonoTitanium = Color(0xFFA1A1AA)
+val MonoMuted = Color(0xFF71717A)
+val MonoDarkBorder = Color(0xFF27272A)
+
+// Secondary alert/accent colors
 val CyberCyan = Color(0xFF00E5FF)
 val CyberEmerald = Color(0xFF00E676)
 val CyberMagenta = Color(0xFFD500F9)
@@ -20,15 +27,15 @@ val CyberCrimson = Color(0xFFFF1744)
 val BossShieldPurple = Color(0xFFAA00FF)
 
 // Text Hierarchy
-val TextPrimary = Color(0xFFF3F6FF)
-val TextSecondary = Color(0xFFA0AEC0)
-val TextMuted = Color(0xFF64748B)
+val TextPrimary = Color(0xFFFFFFFF)
+val TextSecondary = Color(0xFFA1A1AA)
+val TextMuted = Color(0xFF71717A)
 
-// Heatmap Levels (Neon Emerald / Cyan Scale)
-val HeatmapLevel0 = Color(0xFF141A29)
-val HeatmapLevel1 = Color(0xFF0A3D38)
-val HeatmapLevel2 = Color(0xFF00796B)
-val HeatmapLevel3 = Color(0xFF00BFA5)
-val HeatmapLevel4 = Color(0xFF00E676)
+// Heatmap Levels
+val HeatmapLevel0 = Color(0xFF141416)
+val HeatmapLevel1 = Color(0xFF27272A)
+val HeatmapLevel2 = Color(0xFF52525B)
+val HeatmapLevel3 = Color(0xFFA1A1AA)
+val HeatmapLevel4 = Color(0xFFFFFFFF)
 
 fun HscSubject.brandColor(): Color = Color(this.colorHex)

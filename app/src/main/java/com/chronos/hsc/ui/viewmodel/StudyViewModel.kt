@@ -288,7 +288,8 @@ class StudyViewModel(
         startDateEpochDay: Long,
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
-        energyLevel: EnergyLevel
+        energyLevel: EnergyLevel,
+        linkedPreviousChainId: String? = null
     ) {
         viewModelScope.launch {
             val createdChain = repository.createStructuredTopicChain(
@@ -300,7 +301,8 @@ class StudyViewModel(
                 startDateEpochDay = startDateEpochDay,
                 distributionCurve = distributionCurve,
                 dailyProblemTarget = dailyProblemTarget,
-                energyLevel = energyLevel
+                energyLevel = energyLevel,
+                linkedPreviousChainId = linkedPreviousChainId
             )
             modalControlFlow.update { it.copy(isAddTopicModalOpen = false) }
             selectedDateFlow.value = startDateEpochDay
@@ -469,6 +471,17 @@ class StudyViewModel(
                     )
                 )
             }
+        }
+    }
+
+    fun uncompleteTaskSlice(sliceId: String) {
+        viewModelScope.launch {
+            val uncompleted = repository.uncompleteTaskSlice(sliceId) ?: return@launch
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "Restored ${uncompleted.shortBadge} to active! ↩️"
+                )
+            )
         }
     }
 
