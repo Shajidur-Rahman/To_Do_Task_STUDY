@@ -67,8 +67,10 @@ import com.chronos.hsc.data.local.DistributionCurve
 import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import androidx.compose.foundation.shape.CircleShape
 import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.StudyTopicChain
+import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.repository.StudyRepository
 import com.chronos.hsc.ui.theme.CyberCyan
 import com.chronos.hsc.ui.theme.CyberEmerald
@@ -85,12 +87,27 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
+enum class TopicLinkOption {
+    NONE,                 // Unlinked / Standalone
+    LINK_EXACT_NEXT_DAY,  // Linked to previous chapter & auto-schedules to exact day after it finishes (no overlap)
+    LINK_SELECTED_DATE    // Linked to previous chapter & scheduled at user's chosen date
+}
+
+private fun getChainFinishEpochDay(chainWithSlices: TopicChainWithSlices): Long {
+    val maxScheduled = chainWithSlices.coreSlices.maxOfOrNull { it.scheduledDateEpochDay }
+    return maxScheduled ?: (chainWithSlices.chain.createdAtEpochDay + chainWithSlices.chain.totalDays - 1)
+}
+
+private fun getChainExactNextDay(chainWithSlices: TopicChainWithSlices): Long {
+    return getChainFinishEpochDay(chainWithSlices) + 1L
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AddHscTopicModal(
     todayEpochDay: Long,
     initialSelectedDateEpochDay: Long,
-    existingChains: List<StudyTopicChain> = emptyList(),
+    existingChains: List<TopicChainWithSlices> = emptyList(),
     onDismiss: () -> Unit,
     onGenerateChain: (
         subject: HscSubject,
@@ -122,6 +139,8 @@ fun AddHscTopicModal(
     var selectedDays by remember { mutableIntStateOf(4) }
     var isDaysDropdownExpanded by remember { mutableStateOf(false) }
     var isChapterDropdownExpanded by remember { mutableStateOf(false) }
+
+    var userChosenDateEpochDay by remember { mutableLongStateOf(initialSelectedDateEpochDay) }
     var startDateEpochDay by remember { mutableLongStateOf(initialSelectedDateEpochDay) }
     var showDatePickerDialog by remember { mutableStateOf(false) }
     var selectedCurve by remember { mutableStateOf(DistributionCurve.CONCEPT_TO_PROBLEM) }
@@ -136,18 +155,51 @@ fun AddHscTopicModal(
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
     val matchingChains = remember(existingChains, selectedSubject, effectivePaper) {
-        existingChains.filter { it.subject == selectedSubject && it.paper == effectivePaper }
+        existingChains.filter { it.chain.subject == selectedSubject && it.chain.paper == effectivePaper }
     }
-    var linkWithPreviousChain by remember { mutableStateOf(false) }
+    var selectedLinkOption by remember { mutableStateOf(TopicLinkOption.NONE) }
     var selectedLinkedChainId by remember { mutableStateOf<String?>(null) }
     var isTestPaperSolving by remember { mutableStateOf(false) }
 
     LaunchedEffect(matchingChains) {
-        if (matchingChains.isNotEmpty() && (selectedLinkedChainId == null || matchingChains.none { it.chainId == selectedLinkedChainId })) {
-            selectedLinkedChainId = matchingChains.last().chainId
-        } else if (matchingChains.isEmpty()) {
+        if (matchingChains.isNotEmpty()) {
+            if (selectedLinkedChainId == null || matchingChains.none { it.chain.chainId == selectedLinkedChainId }) {
+                val latestFinishing = matchingChains.maxByOrNull { getChainFinishEpochDay(it) } ?: matchingChains.last()
+                selectedLinkedChainId = latestFinishing.chain.chainId
+            }
+        } else {
             selectedLinkedChainId = null
-            linkWithPreviousChain = false
+            selectedLinkOption = TopicLinkOption.NONE
+            startDateEpochDay = userChosenDateEpochDay
+        }
+    }
+
+    val selectedTargetChain = remember(matchingChains, selectedLinkedChainId) {
+        matchingChains.find { it.chain.chainId == selectedLinkedChainId }
+            ?: matchingChains.maxByOrNull { getChainFinishEpochDay(it) }
+            ?: matchingChains.lastOrNull()
+    }
+
+    val targetFinishEpochDay = selectedTargetChain?.let { getChainFinishEpochDay(it) } ?: todayEpochDay
+    val exactNextDayEpochDay = targetFinishEpochDay + 1L
+    val targetFinishFormatted = remember(targetFinishEpochDay) {
+        LocalDate.ofEpochDay(targetFinishEpochDay).format(dateFormatter)
+    }
+    val exactNextDayFormatted = remember(exactNextDayEpochDay) {
+        LocalDate.ofEpochDay(exactNextDayEpochDay).format(dateFormatter)
+    }
+    val userChosenDateFormatted = remember(userChosenDateEpochDay) {
+        LocalDate.ofEpochDay(userChosenDateEpochDay).format(dateFormatter)
+    }
+
+    LaunchedEffect(selectedLinkOption, exactNextDayEpochDay, userChosenDateEpochDay) {
+        when (selectedLinkOption) {
+            TopicLinkOption.LINK_EXACT_NEXT_DAY -> {
+                startDateEpochDay = exactNextDayEpochDay
+            }
+            TopicLinkOption.LINK_SELECTED_DATE, TopicLinkOption.NONE -> {
+                startDateEpochDay = userChosenDateEpochDay
+            }
         }
     }
 
@@ -168,7 +220,12 @@ fun AddHscTopicModal(
                                 val pickedDate = Instant.ofEpochMilli(millis)
                                     .atZone(ZoneOffset.UTC)
                                     .toLocalDate()
-                                startDateEpochDay = pickedDate.toEpochDay()
+                                val pickedEpochDay = pickedDate.toEpochDay()
+                                userChosenDateEpochDay = pickedEpochDay
+                                startDateEpochDay = pickedEpochDay
+                                if (selectedLinkOption == TopicLinkOption.LINK_EXACT_NEXT_DAY) {
+                                    selectedLinkOption = TopicLinkOption.LINK_SELECTED_DATE
+                                }
                             }
                             showDatePickerDialog = false
                         }
@@ -540,115 +597,238 @@ fun AddHscTopicModal(
                 }
             }
 
-            // Link with Previous Chapter Chain (Automatic Domino Cascading)
-            if (matchingChains.isNotEmpty()) {
+            // Link with Previous Chapter Chain (Sequential Pipeline & Domino Cascading)
+            if (matchingChains.isNotEmpty() && selectedTargetChain != null) {
                 Spacer(modifier = Modifier.height(14.dp))
                 SectionLabel("LINK WITH PREVIOUS CHAPTER CHAIN")
                 Spacer(modifier = Modifier.height(6.dp))
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (linkWithPreviousChain) subjectColor.copy(alpha = 0.16f) else ObsidianSurfaceElevated,
-                    border = BorderStroke(1.dp, if (linkWithPreviousChain) subjectColor else ObsidianBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            linkWithPreviousChain = !linkWithPreviousChain
-                            if (linkWithPreviousChain && selectedLinkedChainId == null) {
-                                selectedLinkedChainId = matchingChains.last().chainId
-                            }
-                            if (linkWithPreviousChain && selectedLinkedChainId != null) {
-                                val targetChain = matchingChains.find { it.chainId == selectedLinkedChainId }
-                                if (targetChain != null) {
-                                    val chainEndDay = targetChain.createdAtEpochDay + targetChain.totalDays
-                                    if (chainEndDay >= todayEpochDay) {
-                                        startDateEpochDay = chainEndDay
-                                    }
-                                }
-                            }
-                        }
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    // Context badge showing which previous chapter is being linked
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ObsidianSurfaceElevated,
+                        border = BorderStroke(1.dp, ObsidianBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Link,
-                                    contentDescription = null,
-                                    tint = if (linkWithPreviousChain) subjectColor else TextSecondary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "Link with previous chapter chain",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.5.sp,
-                                        color = if (linkWithPreviousChain) TextPrimary else TextSecondary
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Link,
+                                        contentDescription = null,
+                                        tint = if (selectedLinkOption != TopicLinkOption.NONE) subjectColor else TextSecondary,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                     Text(
-                                        text = "Missed days & Domino Shifts cascade down the study pipeline",
-                                        fontSize = 10.5.sp,
-                                        color = TextMuted
+                                        text = "Previous Paper Topic Detected:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextSecondary
                                     )
                                 }
+                                Text(
+                                    text = when (selectedLinkOption) {
+                                        TopicLinkOption.LINK_EXACT_NEXT_DAY -> "EXACT NEXT DAY 🔗"
+                                        TopicLinkOption.LINK_SELECTED_DATE -> "CUSTOM DATE 🔗"
+                                        TopicLinkOption.NONE -> "NOT LINKED"
+                                    },
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 10.sp,
+                                    color = if (selectedLinkOption != TopicLinkOption.NONE) subjectColor else TextMuted
+                                )
                             }
-                            Text(
-                                text = if (linkWithPreviousChain) "LINKED 🔗" else "OFF",
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 11.sp,
-                                color = if (linkWithPreviousChain) subjectColor else TextMuted
-                            )
-                        }
 
-                        if (linkWithPreviousChain && matchingChains.size > 1) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Select previous chain to link with:",
-                                fontSize = 11.sp,
-                                color = TextSecondary
-                            )
                             Spacer(modifier = Modifier.height(4.dp))
-                            matchingChains.forEach { prevChain ->
-                                val isChainSelected = prevChain.chainId == selectedLinkedChainId
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isChainSelected) subjectColor.copy(alpha = 0.22f) else ObsidianBackground,
-                                    border = BorderStroke(1.dp, if (isChainSelected) subjectColor else ObsidianBorder),
+                            val prevTitle = selectedTargetChain.chain.chapterName.ifEmpty { "অধ্যায় ${selectedTargetChain.chain.chapterNumber}" }
+                            Text(
+                                text = "• $prevTitle (${selectedTargetChain.chain.totalDays} days • Finishes: $targetFinishFormatted)",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+
+                            // If more than 1 chain exists for this paper, let the student choose which one to link
+                            if (matchingChains.size > 1) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Choose which previous chapter to chain from:",
+                                    fontSize = 10.sp,
+                                    color = TextMuted
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 3.dp)
-                                        .clickable {
-                                            selectedLinkedChainId = prevChain.chainId
-                                            val chainEndDay = prevChain.createdAtEpochDay + prevChain.totalDays
-                                            if (chainEndDay >= todayEpochDay) {
-                                                startDateEpochDay = chainEndDay
-                                            }
-                                        }
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "${prevChain.chapterName.ifEmpty { "অধ্যায় ${prevChain.chapterNumber}" }} (${prevChain.totalDays}d)",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = if (isChainSelected) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isChainSelected) TextPrimary else TextSecondary
-                                        )
-                                        if (isChainSelected) {
-                                            Text("✓ Linked", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = subjectColor)
+                                    matchingChains.forEach { chainOption ->
+                                        val isThisTarget = chainOption.chain.chainId == selectedLinkedChainId
+                                        val optFinish = getChainFinishEpochDay(chainOption)
+                                        val optFinishStr = LocalDate.ofEpochDay(optFinish).format(dateFormatter)
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (isThisTarget) subjectColor.copy(alpha = 0.22f) else ObsidianBackground,
+                                            border = BorderStroke(1.dp, if (isThisTarget) subjectColor else ObsidianBorder),
+                                            modifier = Modifier.clickable {
+                                                selectedLinkedChainId = chainOption.chain.chainId
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "${chainOption.chain.chapterName.ifEmpty { "অধ্যায় ${chainOption.chain.chapterNumber}" }} (Ends $optFinishStr)",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = if (isThisTarget) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isThisTarget) TextPrimary else TextSecondary,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // Option 1: "Link with Exact Date" Button
+                    val isExactActive = selectedLinkOption == TopicLinkOption.LINK_EXACT_NEXT_DAY
+                    val prevName = selectedTargetChain.chain.chapterName.ifEmpty { "অধ্যায় ${selectedTargetChain.chain.chapterNumber}" }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isExactActive) subjectColor.copy(alpha = 0.16f) else ObsidianSurfaceElevated,
+                        border = BorderStroke(1.5.dp, if (isExactActive) subjectColor else ObsidianBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedLinkOption = if (isExactActive) {
+                                    TopicLinkOption.NONE
+                                } else {
+                                    TopicLinkOption.LINK_EXACT_NEXT_DAY
+                                }
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isExactActive) subjectColor else ObsidianBackground,
+                                    border = BorderStroke(1.dp, if (isExactActive) subjectColor else ObsidianBorder),
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (isExactActive) {
+                                            Text("✓", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = ObsidianBackground)
+                                        }
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Link with exact date (No Overlap)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp,
+                                        color = if (isExactActive) TextPrimary else TextSecondary
+                                    )
+                                    Text(
+                                        text = "Starts on $exactNextDayFormatted — the day after $prevName finishes ($targetFinishFormatted)",
+                                        fontSize = 10.5.sp,
+                                        color = if (isExactActive) subjectColor else TextMuted
+                                    )
+                                }
+                            }
+                            if (isExactActive) {
+                                Text(
+                                    text = "ACTIVE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = subjectColor
+                                )
+                            }
+                        }
+                    }
+
+                    // Option 2: "Link without Exact Date" (Link at Selected Date) Button
+                    val isCustomActive = selectedLinkOption == TopicLinkOption.LINK_SELECTED_DATE
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isCustomActive) subjectColor.copy(alpha = 0.16f) else ObsidianSurfaceElevated,
+                        border = BorderStroke(1.5.dp, if (isCustomActive) subjectColor else ObsidianBorder),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedLinkOption = if (isCustomActive) {
+                                    TopicLinkOption.NONE
+                                } else {
+                                    TopicLinkOption.LINK_SELECTED_DATE
+                                }
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isCustomActive) subjectColor else ObsidianBackground,
+                                    border = BorderStroke(1.dp, if (isCustomActive) subjectColor else ObsidianBorder),
+                                    modifier = Modifier.size(22.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        if (isCustomActive) {
+                                            Text("✓", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = ObsidianBackground)
+                                        }
+                                    }
+                                }
+                                Column {
+                                    Text(
+                                        text = "Link without exact date (At Selected Date)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp,
+                                        color = if (isCustomActive) TextPrimary else TextSecondary
+                                    )
+                                    Text(
+                                        text = "Starts on your chosen date ($userChosenDateFormatted) & stays linked for domino shift cascade",
+                                        fontSize = 10.5.sp,
+                                        color = if (isCustomActive) subjectColor else TextMuted
+                                    )
+                                }
+                            }
+                            if (isCustomActive) {
+                                Text(
+                                    text = "ACTIVE",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = subjectColor
+                                )
                             }
                         }
                     }
@@ -660,6 +840,37 @@ fun AddHscTopicModal(
             // 5. Start Date Picker (Quick Chips: Today, Tomorrow, Pick Date)
             SectionLabel("4. START DATE")
             Spacer(modifier = Modifier.height(6.dp))
+
+            if (selectedLinkOption == TopicLinkOption.LINK_EXACT_NEXT_DAY) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = subjectColor.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, subjectColor.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Link,
+                            contentDescription = null,
+                            tint = subjectColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Auto-set to: $exactNextDayFormatted (Day after previous chapter)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = subjectColor
+                        )
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -675,7 +886,13 @@ fun AddHscTopicModal(
                     shape = RoundedCornerShape(8.dp),
                     color = if (isTodaySelected) CyberCyan.copy(alpha = 0.2f) else ObsidianSurfaceElevated,
                     border = BorderStroke(1.dp, if (isTodaySelected) CyberCyan else ObsidianBorder),
-                    modifier = Modifier.clickable { startDateEpochDay = todayEpochDay }
+                    modifier = Modifier.clickable {
+                        userChosenDateEpochDay = todayEpochDay
+                        startDateEpochDay = todayEpochDay
+                        if (selectedLinkOption == TopicLinkOption.LINK_EXACT_NEXT_DAY) {
+                            selectedLinkOption = TopicLinkOption.LINK_SELECTED_DATE
+                        }
+                    }
                 ) {
                     Text(
                         text = "Today",
@@ -691,7 +908,13 @@ fun AddHscTopicModal(
                     shape = RoundedCornerShape(8.dp),
                     color = if (isTomorrowSelected) CyberCyan.copy(alpha = 0.2f) else ObsidianSurfaceElevated,
                     border = BorderStroke(1.dp, if (isTomorrowSelected) CyberCyan else ObsidianBorder),
-                    modifier = Modifier.clickable { startDateEpochDay = todayEpochDay + 1L }
+                    modifier = Modifier.clickable {
+                        userChosenDateEpochDay = todayEpochDay + 1L
+                        startDateEpochDay = todayEpochDay + 1L
+                        if (selectedLinkOption == TopicLinkOption.LINK_EXACT_NEXT_DAY) {
+                            selectedLinkOption = TopicLinkOption.LINK_SELECTED_DATE
+                        }
+                    }
                 ) {
                     Text(
                         text = "Tomorrow",
@@ -952,7 +1175,7 @@ fun AddHscTopicModal(
                         selectedCurve,
                         dailyProblems,
                         selectedEnergy,
-                        if (linkWithPreviousChain) selectedLinkedChainId else null
+                        if (selectedLinkOption != TopicLinkOption.NONE) selectedLinkedChainId else null
                     )
                 },
                 colors = ButtonDefaults.buttonColors(

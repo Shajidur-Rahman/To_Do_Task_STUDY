@@ -552,6 +552,8 @@ class StudyRepository(
         val toReschedule = if (targetIndex >= 0) incomplete.subList(targetIndex, incomplete.size) else incomplete
 
         var currentDate = todayEpochDay
+        val delta = (todayEpochDay - targetSlice.scheduledDateEpochDay).coerceAtLeast(0L)
+
         val updated = toReschedule.map { slice ->
             val newSlice = slice.copy(
                 scheduledDateEpochDay = currentDate,
@@ -563,6 +565,9 @@ class StudyRepository(
         }
 
         dao.updateSlices(updated)
+        if (delta > 0L) {
+            shiftDownstreamLinkedChains(chainId, delta)
+        }
         syncOverdueBossShields(todayEpochDay)
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updated.size
@@ -571,7 +576,8 @@ class StudyRepository(
     /**
      * Instant Catch-Up All Chains:
      * Re-baselines all lagging/overdue chains starting today so the student
-     * can start fresh without overdue backlog anxiety.
+     * can start fresh without overdue backlog anxiety, maintaining sequential non-overlapping order
+     * for linked chapter chains.
      */
     suspend fun instantCatchUpAllLaggingChains(todayEpochDay: Long): Int {
         val allIncomplete = dao.getAllIncompleteSlicesOnce()
@@ -581,6 +587,7 @@ class StudyRepository(
 
         val affectedChainIds = allIncomplete.map { it.chainId }.distinct()
         var count = 0
+        val chainFinishDates = mutableMapOf<String, Long>()
 
         for (chainId in affectedChainIds) {
             val incompleteCore = dao.getIncompleteSlicesForChain(chainId)
@@ -589,7 +596,10 @@ class StudyRepository(
 
             if (incompleteCore.isEmpty()) continue
 
-            var currentDate = todayEpochDay
+            val parentChain = dao.getChainById(chainId)
+            val parentFinish = parentChain?.linkedPreviousChainId?.let { chainFinishDates[it] }
+            var currentDate = if (parentFinish != null) maxOf(todayEpochDay, parentFinish + 1L) else todayEpochDay
+
             val updated = incompleteCore.map { slice ->
                 val newSlice = slice.copy(
                     scheduledDateEpochDay = currentDate,
@@ -600,6 +610,7 @@ class StudyRepository(
                 newSlice
             }
             dao.updateSlices(updated)
+            chainFinishDates[chainId] = currentDate - 1L
             count += updated.size
         }
 

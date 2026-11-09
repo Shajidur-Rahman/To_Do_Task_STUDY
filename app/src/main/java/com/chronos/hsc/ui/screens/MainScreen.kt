@@ -351,7 +351,7 @@ fun MainScreen(
             AddHscTopicModal(
                 todayEpochDay = state.todayEpochDay,
                 initialSelectedDateEpochDay = state.selectedDateEpochDay,
-                existingChains = state.allChainsWithSlices.map { it.chain },
+                existingChains = state.allChainsWithSlices,
                 onDismiss = viewModel::closeAddTopicModal,
                 onGenerateChain = viewModel::createStructuredTopicChain
             )
