@@ -89,11 +89,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chronos.hsc.data.local.EnergyLevel
 import com.chronos.hsc.data.local.ExamCountdownEntity
+import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.SliceWithParentChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.notification.ChronosNotificationHelper
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.ui.components.AccountabilityCardModal
 import com.chronos.hsc.ui.components.AddHscTopicModal
 import com.chronos.hsc.ui.components.BossHealthBar
@@ -1780,7 +1782,13 @@ private fun ActiveBossesMiniCarousel(
                 key = { it.chain.chainId }
             ) { chainWithSlices ->
                 val chain = chainWithSlices.chain
-                val sColor = chain.subject.brandColor()
+                val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+                val sColor = if (customLink != null) {
+                    Color(customLink.colorHex)
+                } else {
+                    chain.subject.brandColor()
+                }
+                val subjectLabel = if (customLink != null) "${customLink.name} Ch ${chain.chapterNumber}" else "${chain.subject.fullName} Ch ${chain.chapterNumber}"
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = ObsidianSurface,
@@ -1794,7 +1802,7 @@ private fun ActiveBossesMiniCarousel(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "${chain.subject.fullName} Ch ${chain.chapterNumber}",
+                                text = subjectLabel,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 11.sp,
@@ -2025,7 +2033,12 @@ private fun ActiveChainsTab(
                 key = { it.chain.chainId }
             ) { item ->
                 val chain = item.chain
-                val subjectColor = chain.subject.brandColor()
+                val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+                val subjectColor = if (customLink != null) {
+                    Color(customLink.colorHex)
+                } else {
+                    chain.subject.brandColor()
+                }
                 val resolvedBanglaName = chain.chapterName.trim().ifEmpty {
                     HscSyllabusCatalog.getChapterNameBangla(
                         chain.subject,
@@ -2034,6 +2047,11 @@ private fun ActiveChainsTab(
                     )
                 }
                 val chapterHeading = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}: $resolvedBanglaName"
+                val subjectHeaderLabel = if (customLink != null) {
+                    if (customLink.hasSecondPaper && chain.paper != HscPaper.SINGLE) "${customLink.name} • ${chain.paper.fullName}" else customLink.name
+                } else {
+                    "${chain.subject.fullName} • ${chain.paper.fullName}"
+                }
 
                 Surface(
                     shape = RoundedCornerShape(18.dp),
@@ -2056,7 +2074,7 @@ private fun ActiveChainsTab(
                                             .padding(horizontal = 7.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "${chain.subject.fullName} • ${chain.paper.fullName}",
+                                            text = subjectHeaderLabel,
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 10.sp,
@@ -2330,7 +2348,8 @@ private fun AnalyticsAndHeatmapTab(
                     )
 
                     state.subjectAnalytics.forEach { stat ->
-                        val sColor = stat.subject.brandColor()
+                        val sColor = stat.customColorHex?.let { Color(it) } ?: stat.subject.brandColor()
+                        val displayName = stat.customSubjectName ?: stat.subject.fullName
                         Column {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -2346,7 +2365,7 @@ private fun AnalyticsAndHeatmapTab(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = stat.subject.fullName,
+                                        text = displayName,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = TextPrimary

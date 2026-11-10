@@ -17,6 +17,7 @@ import com.chronos.hsc.data.local.StudyDao
 import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.DominoShiftResult
 import com.chronos.hsc.domain.HeatmapDayCell
@@ -103,8 +104,10 @@ class StudyRepository(
      */
     fun observeSubjectAnalytics(): Flow<List<SubjectAnalyticsSummary>> {
         return dao.observeAllChainsWithSlices().map { chainsWithSlices ->
-            HscSubject.entries.map { subject ->
-                val subjectChains = chainsWithSlices.filter { it.chain.subject == subject }
+            val standardList = HscSubject.entries.map { subject ->
+                val subjectChains = chainsWithSlices.filter {
+                    it.chain.subject == subject && CustomSubjectAndAiStore.getCustomSubjectForChain(it.chain.chainId) == null
+                }
                 val subjectSlices = subjectChains.flatMap { it.slices }
                 SubjectAnalyticsSummary(
                     subject = subject,
@@ -114,6 +117,23 @@ class StudyRepository(
                     activeChainsCount = subjectChains.count { !it.chain.isChainCompleted }
                 )
             }
+            val customSubjects = CustomSubjectAndAiStore.getCustomSubjects()
+            val customList = customSubjects.map { cs ->
+                val csChains = chainsWithSlices.filter {
+                    CustomSubjectAndAiStore.getCustomSubjectForChain(it.chain.chainId)?.id == cs.id
+                }
+                val csSlices = csChains.flatMap { it.slices }
+                SubjectAnalyticsSummary(
+                    subject = HscSubject.ICT,
+                    totalSlices = csSlices.size,
+                    completedSlices = csSlices.count { it.isCompleted },
+                    totalProblemsSolved = csSlices.sumOf { it.problemsCompleted },
+                    activeChainsCount = csChains.count { !it.chain.isChainCompleted },
+                    customSubjectName = cs.name,
+                    customColorHex = cs.colorHex
+                )
+            }
+            standardList + customList
         }
     }
 
@@ -231,7 +251,8 @@ class StudyRepository(
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
         energyLevel: EnergyLevel,
-        linkedPreviousChainId: String? = null
+        linkedPreviousChainId: String? = null,
+        customSubjectId: String? = null
     ): StudyTopicChain {
         val effectivePaper = if (subject.isSinglePaperOnly) HscPaper.SINGLE else paper
         val safeTotalDays = totalDays.coerceIn(1, 15)
@@ -241,6 +262,11 @@ class StudyRepository(
         }
         val chainId = UUID.randomUUID().toString()
         val bossMaxHp = safeTotalDays * 100
+
+        val customSub = customSubjectId?.let { CustomSubjectAndAiStore.getCustomSubject(it) }
+        if (customSub != null) {
+            CustomSubjectAndAiStore.linkChainToCustomSubject(chainId, customSub.id)
+        }
 
         val parentChain = StudyTopicChain(
             chainId = chainId,
@@ -261,24 +287,40 @@ class StudyRepository(
 
         val slices = (1..safeTotalDays).map { dayIndex ->
             val sliceDateEpoch = startDateEpochDay + (dayIndex - 1).toLong()
-            DailyTaskSlice(
-                sliceId = UUID.randomUUID().toString(),
-                chainId = chainId,
-                sliceNumber = dayIndex,
-                totalSlicesInChain = safeTotalDays,
-                displayTitle = formatSliceDisplayTitle(
+            val displayTitleStr = if (customSub != null) {
+                val paperSuffix = if (customSub.hasSecondPaper && effectivePaper != HscPaper.SINGLE) " ${effectivePaper.compactTitleLabel}" else ""
+                val bnCh = HscSyllabusCatalog.toBanglaDigits(safeChapterNo)
+                val bnSlice = HscSyllabusCatalog.toBanglaDigits(dayIndex)
+                "${customSub.name}$paperSuffix • অধ্যায় $bnCh ($bnSlice): $cleanChapterName"
+            } else {
+                formatSliceDisplayTitle(
                     subject = subject,
                     paper = effectivePaper,
                     chapterNumber = safeChapterNo,
                     sliceNumber = dayIndex,
                     chapterName = cleanChapterName
-                ),
-                shortBadge = formatShortBadge(
+                )
+            }
+
+            val shortBadgeStr = if (customSub != null) {
+                val paperCode = if (customSub.hasSecondPaper && effectivePaper != HscPaper.SINGLE) effectivePaper.shortCode else ""
+                "${customSub.shortBadge}$paperCode Ch $safeChapterNo-$dayIndex"
+            } else {
+                formatShortBadge(
                     subject = subject,
                     paper = effectivePaper,
                     chapterNumber = safeChapterNo,
                     sliceNumber = dayIndex
-                ),
+                )
+            }
+
+            DailyTaskSlice(
+                sliceId = UUID.randomUUID().toString(),
+                chainId = chainId,
+                sliceNumber = dayIndex,
+                totalSlicesInChain = safeTotalDays,
+                displayTitle = displayTitleStr,
+                shortBadge = shortBadgeStr,
                 phaseTag = distributionCurve.phaseTagForDay(dayIndex, safeTotalDays),
                 scheduledDateEpochDay = sliceDateEpoch,
                 problemsCompleted = 0,
@@ -312,6 +354,7 @@ class StudyRepository(
             slices = current.slices
         )
         dao.deleteTopicChainById(chainId)
+        CustomSubjectAndAiStore.removeChainLink(chainId)
         ChronosWidgetUpdater.requestUpdate(appContext)
         return snapshot
     }

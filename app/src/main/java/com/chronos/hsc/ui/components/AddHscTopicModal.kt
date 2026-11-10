@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
@@ -46,6 +47,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material.icons.filled.Link
+import com.chronos.hsc.data.store.CustomSubject
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -119,10 +122,16 @@ fun AddHscTopicModal(
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
         energyLevel: EnergyLevel,
-        linkedPreviousChainId: String?
+        linkedPreviousChainId: String?,
+        customSubjectId: String?
     ) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var customSubjectsList by remember { mutableStateOf(CustomSubjectAndAiStore.getCustomSubjects()) }
+    var selectedCustomSubject by remember { mutableStateOf<CustomSubject?>(null) }
+    var showCreateCustomDialog by remember { mutableStateOf(false) }
+    var customSubjectToDelete by remember { mutableStateOf<CustomSubject?>(null) }
 
     var selectedSubject by remember { mutableStateOf(HscSubject.PHYSICS) }
     var selectedPaper by remember { mutableStateOf(HscPaper.FIRST_PAPER) }
@@ -147,15 +156,41 @@ fun AddHscTopicModal(
     var dailyProblems by remember { mutableIntStateOf(5) }
     var selectedEnergy by remember { mutableStateOf(EnergyLevel.HIGH_FOCUS) }
 
-    val effectivePaper = if (selectedSubject.isSinglePaperOnly) HscPaper.SINGLE else selectedPaper
-    val availableChapters = remember(selectedSubject, effectivePaper) {
-        HscSyllabusCatalog.getChaptersFor(selectedSubject, effectivePaper)
+    val isSubjectSinglePaper = if (selectedCustomSubject != null) {
+        !selectedCustomSubject!!.hasSecondPaper
+    } else {
+        selectedSubject.isSinglePaperOnly
     }
-    val subjectColor = selectedSubject.brandColor()
+    val effectivePaper = if (isSubjectSinglePaper) HscPaper.SINGLE else selectedPaper
+    val availableChapters = remember(selectedSubject, effectivePaper, selectedCustomSubject) {
+        if (selectedCustomSubject != null) {
+            (1..15).map { "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(it)}" }
+        } else {
+            HscSyllabusCatalog.getChaptersFor(selectedSubject, effectivePaper)
+        }
+    }
+    val subjectColor = remember(selectedSubject, selectedCustomSubject) {
+        if (selectedCustomSubject != null) {
+            Color(selectedCustomSubject!!.colorHex)
+        } else {
+            selectedSubject.brandColor()
+        }
+    }
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 
-    val matchingChains = remember(existingChains, selectedSubject, effectivePaper) {
-        existingChains.filter { it.chain.subject == selectedSubject && it.chain.paper == effectivePaper }
+    val matchingChains = remember(existingChains, selectedSubject, selectedCustomSubject, effectivePaper) {
+        if (selectedCustomSubject != null) {
+            existingChains.filter { chainWithSlices ->
+                CustomSubjectAndAiStore.getCustomSubjectForChain(chainWithSlices.chain.chainId)?.id == selectedCustomSubject?.id &&
+                    chainWithSlices.chain.paper == effectivePaper
+            }
+        } else {
+            existingChains.filter { chainWithSlices ->
+                chainWithSlices.chain.subject == selectedSubject &&
+                    chainWithSlices.chain.paper == effectivePaper &&
+                    CustomSubjectAndAiStore.getCustomSubjectForChain(chainWithSlices.chain.chainId) == null
+            }
+        }
     }
     var selectedLinkOption by remember { mutableStateOf(TopicLinkOption.NONE) }
     var selectedLinkedChainId by remember { mutableStateOf<String?>(null) }
@@ -296,7 +331,7 @@ fun AddHscTopicModal(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 HscSubject.entries.forEach { subject ->
-                    val isSelected = selectedSubject == subject
+                    val isSelected = selectedCustomSubject == null && selectedSubject == subject
                     val sColor = subject.brandColor()
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -306,6 +341,7 @@ fun AddHscTopicModal(
                             color = if (isSelected) sColor else ObsidianBorder
                         ),
                         modifier = Modifier.clickable {
+                            selectedCustomSubject = null
                             selectedSubject = subject
                             val nextPaper = when {
                                 subject.isSinglePaperOnly -> HscPaper.SINGLE
@@ -345,6 +381,88 @@ fun AddHscTopicModal(
                         }
                     }
                 }
+
+                // User-Created Custom Subjects
+                customSubjectsList.forEach { customSub ->
+                    val isSelected = selectedCustomSubject?.id == customSub.id
+                    val csColor = Color(customSub.colorHex)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSelected) csColor.copy(alpha = 0.22f) else ObsidianSurfaceElevated,
+                        border = BorderStroke(
+                            width = if (isSelected) 1.5.dp else 1.dp,
+                            color = if (isSelected) csColor else ObsidianBorder
+                        ),
+                        modifier = Modifier.clickable {
+                            selectedCustomSubject = customSub
+                            selectedSubject = HscSubject.ICT
+                            selectedPaper = if (customSub.hasSecondPaper) HscPaper.FIRST_PAPER else HscPaper.SINGLE
+                            selectedChapterNumber = 1
+                            chapterTitle = "অধ্যায় ১"
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = customSub.shortBadge,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = csColor,
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = customSub.name,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) TextPrimary else TextSecondary,
+                                fontSize = 13.sp
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            IconButton(
+                                onClick = { customSubjectToDelete = customSub },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Delete ${customSub.name}",
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // High-Visibility [+ Add Subject] Chip
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = CyberCyan.copy(alpha = 0.08f),
+                    border = BorderStroke(1.5.dp, CyberCyan.copy(alpha = 0.8f)),
+                    modifier = Modifier.clickable {
+                        showCreateCustomDialog = true
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "Add Custom Subject",
+                            tint = CyberCyan,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "+ Add Subject",
+                            fontWeight = FontWeight.ExtraBold,
+                            color = CyberCyan,
+                            fontSize = 12.5.sp
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -352,7 +470,7 @@ fun AddHscTopicModal(
             // 2. Paper Selector
             SectionLabel("2. PAPER SELECTION")
             Spacer(modifier = Modifier.height(6.dp))
-            if (selectedSubject.isSinglePaperOnly) {
+            if (isSubjectSinglePaper) {
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = subjectColor.copy(alpha = 0.14f),
@@ -360,7 +478,11 @@ fun AddHscTopicModal(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "ICT uses Single Paper automatically",
+                        text = if (selectedCustomSubject != null) {
+                            "${selectedCustomSubject!!.name} uses Single Paper automatically"
+                        } else {
+                            "ICT uses Single Paper automatically"
+                        },
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -374,6 +496,11 @@ fun AddHscTopicModal(
                 ) {
                     listOf(HscPaper.FIRST_PAPER, HscPaper.SECOND_PAPER).forEach { paper ->
                         val isSelected = effectivePaper == paper
+                        val paperLabel = if (selectedCustomSubject != null) {
+                            "${paper.fullName} (${selectedCustomSubject!!.shortBadge}${paper.shortCode})"
+                        } else {
+                            "${paper.fullName} (${selectedSubject.shortCode}${paper.shortCode})"
+                        }
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = if (isSelected) subjectColor.copy(alpha = 0.2f) else ObsidianSurfaceElevated,
@@ -385,15 +512,17 @@ fun AddHscTopicModal(
                                 .weight(1f)
                                 .clickable {
                                     selectedPaper = paper
-                                    val nextChapters = HscSyllabusCatalog.getChaptersFor(selectedSubject, paper)
-                                    if (selectedChapterNumber > nextChapters.size) {
-                                        selectedChapterNumber = 1
+                                    if (selectedCustomSubject == null) {
+                                        val nextChapters = HscSyllabusCatalog.getChaptersFor(selectedSubject, paper)
+                                        if (selectedChapterNumber > nextChapters.size) {
+                                            selectedChapterNumber = 1
+                                        }
+                                        chapterTitle = HscSyllabusCatalog.getChapterNameBangla(
+                                            selectedSubject,
+                                            paper,
+                                            selectedChapterNumber
+                                        )
                                     }
-                                    chapterTitle = HscSyllabusCatalog.getChapterNameBangla(
-                                        selectedSubject,
-                                        paper,
-                                        selectedChapterNumber
-                                    )
                                 }
                         ) {
                             Box(
@@ -401,7 +530,7 @@ fun AddHscTopicModal(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "${paper.fullName} (${selectedSubject.shortCode}${paper.shortCode})",
+                                    text = paperLabel,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = if (isSelected) subjectColor else TextSecondary
@@ -425,11 +554,15 @@ fun AddHscTopicModal(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value = HscSyllabusCatalog.getDropdownChapterLabel(
-                        selectedSubject,
-                        effectivePaper,
-                        selectedChapterNumber
-                    ),
+                    value = if (selectedCustomSubject != null) {
+                        "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(selectedChapterNumber)}"
+                    } else {
+                        HscSyllabusCatalog.getDropdownChapterLabel(
+                            selectedSubject,
+                            effectivePaper,
+                            selectedChapterNumber
+                        )
+                    },
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("HSC অধ্যায় নির্বাচন করুন (Select Chapter)") },
@@ -1135,13 +1268,20 @@ fun AddHscTopicModal(
                     val previewCount = selectedDays.coerceAtMost(4)
                     (1..previewCount).forEach { idx ->
                         val dateStr = LocalDate.ofEpochDay(startDateEpochDay + (idx - 1).toLong()).format(dateFormatter)
-                        val titleStr = StudyRepository.formatSliceDisplayTitle(
-                            selectedSubject,
-                            effectivePaper,
-                            selectedChapterNumber,
-                            idx,
-                            previewTopic
-                        )
+                        val titleStr = if (selectedCustomSubject != null) {
+                            val paperSuffix = if (selectedCustomSubject!!.hasSecondPaper && effectivePaper != HscPaper.SINGLE) " ${effectivePaper.compactTitleLabel}" else ""
+                            val bnCh = HscSyllabusCatalog.toBanglaDigits(selectedChapterNumber)
+                            val bnSlice = HscSyllabusCatalog.toBanglaDigits(idx)
+                            "${selectedCustomSubject!!.name}$paperSuffix • অধ্যায় $bnCh ($bnSlice): $previewTopic"
+                        } else {
+                            StudyRepository.formatSliceDisplayTitle(
+                                selectedSubject,
+                                effectivePaper,
+                                selectedChapterNumber,
+                                idx,
+                                previewTopic
+                            )
+                        }
                         val phaseStr = selectedCurve.phaseTagForDay(idx, selectedDays)
                         Text(
                             text = "• [$dateStr] $titleStr ($phaseStr)",
@@ -1175,7 +1315,8 @@ fun AddHscTopicModal(
                         selectedCurve,
                         dailyProblems,
                         selectedEnergy,
-                        if (selectedLinkOption != TopicLinkOption.NONE) selectedLinkedChainId else null
+                        if (selectedLinkOption != TopicLinkOption.NONE) selectedLinkedChainId else null,
+                        selectedCustomSubject?.id
                     )
                 },
                 colors = ButtonDefaults.buttonColors(
@@ -1201,6 +1342,66 @@ fun AddHscTopicModal(
 
             Spacer(modifier = Modifier.height(20.dp))
         }
+    }
+
+    if (showCreateCustomDialog) {
+        CreateCustomSubjectDialog(
+            onDismiss = { showCreateCustomDialog = false },
+            onSubjectCreated = { created ->
+                showCreateCustomDialog = false
+                customSubjectsList = CustomSubjectAndAiStore.getCustomSubjects()
+                selectedCustomSubject = created
+                selectedSubject = HscSubject.ICT
+                selectedPaper = if (created.hasSecondPaper) HscPaper.FIRST_PAPER else HscPaper.SINGLE
+                selectedChapterNumber = 1
+                chapterTitle = "অধ্যায় ১"
+            }
+        )
+    }
+
+    if (customSubjectToDelete != null) {
+        val target = customSubjectToDelete
+        AlertDialog(
+            onDismissRequest = { customSubjectToDelete = null },
+            title = {
+                Text("Delete Custom Subject?", color = TextPrimary, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "Remove '${target?.name}' from your subject list? Already scheduled topic chains and tasks in your Battleground will NOT be deleted.",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (target != null) {
+                            CustomSubjectAndAiStore.deleteCustomSubject(target.id)
+                            customSubjectsList = CustomSubjectAndAiStore.getCustomSubjects()
+                            if (selectedCustomSubject?.id == target.id) {
+                                selectedCustomSubject = null
+                                selectedSubject = HscSubject.PHYSICS
+                                selectedPaper = HscPaper.FIRST_PAPER
+                                selectedChapterNumber = 1
+                                chapterTitle = HscSyllabusCatalog.getChapterNameBangla(HscSubject.PHYSICS, HscPaper.FIRST_PAPER, 1)
+                            }
+                        }
+                        customSubjectToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF1744))
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { customSubjectToDelete = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = ObsidianSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 }
 

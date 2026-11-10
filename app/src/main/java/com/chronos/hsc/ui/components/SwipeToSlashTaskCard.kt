@@ -97,6 +97,7 @@ import com.chronos.hsc.ui.theme.NatureSproutLime
 import com.chronos.hsc.ui.theme.TerrariumBorder
 import com.chronos.hsc.ui.theme.TerrariumSurface
 import com.chronos.hsc.ui.theme.TerrariumSurfaceElevated
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.ui.components.NatureLadybugBorder
 import com.chronos.hsc.ui.components.NatureVineSwipeOverlay
 import kotlinx.coroutines.launch
@@ -127,7 +128,12 @@ fun SwipeToSlashTaskCard(
 ) {
     val slice = item.slice
     val chain = item.chain
-    val subjectColor = chain.subject.brandColor()
+    val customSub = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+    val subjectColor = if (customSub != null) {
+        Color(customSub.colorHex)
+    } else {
+        chain.subject.brandColor()
+    }
     val haptic = LocalHapticFeedback.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()

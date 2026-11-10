@@ -22,12 +22,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -36,6 +39,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.chronos.hsc.data.service.GeminiRouletteService
+import com.chronos.hsc.data.store.AiRouletteRecommendation
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,11 +96,67 @@ fun TaskRouletteModal(
     val view = LocalView.current
 
     var isSpinning by remember { mutableStateOf(false) }
+    var isAiAnalyzing by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+    var aiRecommendation by remember { mutableStateOf<AiRouletteRecommendation?>(CustomSubjectAndAiStore.getLastRecommendation()) }
     var highlightedIndex by remember { mutableIntStateOf(0) }
     var lockedItem by remember(sprintTimerState?.targetSliceId, incompleteSlices) {
         mutableStateOf(
             incompleteSlices.firstOrNull { it.slice.sliceId == sprintTimerState?.targetSliceId }
         )
+    }
+
+    val spinRoulette: () -> Unit = {
+        if (!isSpinning && incompleteSlices.isNotEmpty()) {
+            isSpinning = true
+            isAiAnalyzing = true
+            lockedItem = null
+            scope.launch {
+                val aiDeferred = async(Dispatchers.IO) {
+                    GeminiRouletteService.analyzeAndSpinLiveRoulette(incompleteSlices)
+                }
+
+                val poolSize = incompleteSlices.size.coerceAtLeast(1)
+                var delayMs = 45L
+                var step = 0
+                while (step < 16 || !aiDeferred.isCompleted) {
+                    highlightedIndex = step % poolSize
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    delay(delayMs)
+                    step++
+                    if (step > 12) {
+                        delayMs = (delayMs * 1.05f).toLong().coerceAtMost(160L)
+                    }
+                }
+
+                val rec = try {
+                    aiDeferred.await()
+                } catch (_: Exception) {
+                    null
+                }
+
+                aiRecommendation = rec
+                isAiAnalyzing = false
+
+                val winner = incompleteSlices.find { it.slice.sliceId == rec?.selectedSliceId }
+                    ?: incompleteSlices.random()
+                val targetWinnerIdx = incompleteSlices.indexOf(winner).coerceAtLeast(0)
+
+                val currentMod = step % poolSize
+                val stepsNeeded = ((targetWinnerIdx - currentMod + poolSize) % poolSize) + poolSize
+                for (extra in 1..stepsNeeded) {
+                    highlightedIndex = (step + extra) % poolSize
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    delay(delayMs)
+                    delayMs = (delayMs * 1.15f).toLong().coerceAtMost(320L)
+                }
+
+                lockedItem = winner
+                isSpinning = false
+                view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                onLockedSlice(winner)
+            }
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -136,12 +200,22 @@ fun TaskRouletteModal(
                             )
                         }
                     }
-                    IconButton(onClick = onDismiss) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = TextSecondary
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { showSettingsDialog = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "AI Settings",
+                                tint = CyberCyan,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
+                                tint = TextSecondary
+                            )
+                        }
                     }
                 }
 
@@ -181,7 +255,12 @@ fun TaskRouletteModal(
                             incompleteSlices.forEachIndexed { idx, candidate ->
                                 val isHighlighted = (isSpinning && highlightedIndex % incompleteSlices.size == idx) ||
                                     (!isSpinning && lockedItem?.slice?.sliceId == candidate.slice.sliceId)
-                                val sColor = candidate.chain.subject.brandColor()
+                                val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(candidate.chain.chainId)
+                                val sColor = if (customLink != null) {
+                                    Color(customLink.colorHex)
+                                } else {
+                                    candidate.chain.subject.brandColor()
+                                }
 
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
@@ -237,46 +316,135 @@ fun TaskRouletteModal(
                     // Spin Button (when not currently running a 25-min sprint)
                     if (sprintTimerState?.isSprintRunning != true) {
                         Button(
-                            onClick = {
-                                if (isSpinning || incompleteSlices.isEmpty()) return@Button
-                                isSpinning = true
-                                lockedItem = null
-                                scope.launch {
-                                    val poolSize = incompleteSlices.size.coerceAtLeast(1)
-                                    val targetWinnerIdx = Random.nextInt(poolSize)
-                                    val minCycles = if (poolSize == 1) 6 else 4
-                                    val totalSteps = (poolSize * minCycles) + targetWinnerIdx
-                                    var delayMs = 45L
-                                    for (step in 0..totalSteps) {
-                                        highlightedIndex = step % poolSize
-                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                        delay(delayMs)
-                                        delayMs = (delayMs * 1.11f).toLong().coerceAtMost(290L)
-                                    }
-                                    val winner = incompleteSlices[targetWinnerIdx]
-                                    lockedItem = winner
-                                    isSpinning = false
-                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                    onLockedSlice(winner)
-                                }
-                            },
+                            onClick = { spinRoulette() },
                             enabled = !isSpinning && incompleteSlices.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = CyberMagenta,
-                                contentColor = Color.White
+                                containerColor = if (isSpinning) CyberAmber else CyberMagenta,
+                                contentColor = if (isSpinning) ObsidianBackground else Color.White
                             ),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(48.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Casino, contentDescription = null)
+                            Icon(
+                                imageVector = if (isSpinning) Icons.Default.AutoAwesome else Icons.Default.Casino,
+                                contentDescription = null
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (isSpinning) "SPINNING SLOT WHEEL..." else "🎲 SPIN TASK ROULETTE",
+                                text = if (isSpinning) "🧠 AI SYNAPSES FIRING... LIVE TELEMETRY" else "🎲 SPIN TASK ROULETTE",
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
+                                fontSize = 13.5.sp
                             )
+                        }
+                    }
+
+                    // Rich AI Behavioral & Cognitive Insight Card
+                    if (!isSpinning && lockedItem != null && aiRecommendation != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = ObsidianSurfaceElevated,
+                            border = BorderStroke(1.2.dp, CyberCyan.copy(alpha = 0.7f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = CyberCyan,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = if (aiRecommendation?.isOfflineFallback == true) "COGNITIVE HEURISTIC" else "GEMINI 3.8 FLASH • LIVE TELEMETRY",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 10.sp,
+                                            color = CyberCyan
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = CyberCyan.copy(alpha = 0.15f),
+                                        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.4f))
+                                    ) {
+                                        Text(
+                                            text = aiRecommendation?.cognitiveTransitionTag ?: "COGNITIVE REBOUND",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp,
+                                            color = CyberCyan,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = aiRecommendation?.behaviorAnalysisNote ?: "",
+                                    fontSize = 11.5.sp,
+                                    color = TextPrimary,
+                                    lineHeight = 15.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Text(
+                                    text = "🎯 Why now: ${aiRecommendation?.whyThisTaskNow ?: ""}",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary,
+                                    lineHeight = 14.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    text = "⏭️ Next recommended: ${aiRecommendation?.nextRecommendedAfterThis ?: ""}",
+                                    fontSize = 10.5.sp,
+                                    color = TextMuted,
+                                    lineHeight = 14.sp
+                                )
+
+                                if (sprintTimerState?.isSprintRunning != true) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            val currentWinner = lockedItem
+                                            if (currentWinner != null) {
+                                                CustomSubjectAndAiStore.addRejectedSlice(currentWinner.slice.sliceId)
+                                            }
+                                            spinRoulette()
+                                        },
+                                        border = BorderStroke(1.dp, CyberAmber.copy(alpha = 0.7f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberAmber),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(34.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = "🎲 Re-Spin (Skip & Rebalance)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -467,5 +635,11 @@ fun TaskRouletteModal(
                 }
             }
         }
+    }
+
+    if (showSettingsDialog) {
+        AiRouletteSettingsDialog(
+            onDismiss = { showSettingsDialog = false }
+        )
     }
 }

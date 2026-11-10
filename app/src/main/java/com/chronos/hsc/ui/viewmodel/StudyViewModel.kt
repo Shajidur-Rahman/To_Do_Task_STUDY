@@ -15,6 +15,7 @@ import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.repository.StudyRepository
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.HeatmapDayCell
 import com.chronos.hsc.domain.NeuroTelemetrySummary
@@ -289,7 +290,8 @@ class StudyViewModel(
         distributionCurve: DistributionCurve,
         dailyProblemTarget: Int,
         energyLevel: EnergyLevel,
-        linkedPreviousChainId: String? = null
+        linkedPreviousChainId: String? = null,
+        customSubjectId: String? = null
     ) {
         viewModelScope.launch {
             val createdChain = repository.createStructuredTopicChain(
@@ -302,13 +304,15 @@ class StudyViewModel(
                 distributionCurve = distributionCurve,
                 dailyProblemTarget = dailyProblemTarget,
                 energyLevel = energyLevel,
-                linkedPreviousChainId = linkedPreviousChainId
+                linkedPreviousChainId = linkedPreviousChainId,
+                customSubjectId = customSubjectId
             )
             modalControlFlow.update { it.copy(isAddTopicModalOpen = false) }
             selectedDateFlow.value = startDateEpochDay
+            val displaySubjectName = customSubjectId?.let { CustomSubjectAndAiStore.getCustomSubject(it)?.name } ?: createdChain.subject.fullName
             _events.emit(
                 StudyUiEvent.ShowSnackbar(
-                    message = "Generated ${createdChain.totalDays}-day study chain for ${createdChain.subject.fullName} Ch ${createdChain.chapterNumber}!"
+                    message = "Generated ${createdChain.totalDays}-day study chain for $displaySubjectName Ch ${createdChain.chapterNumber}!"
                 )
             )
         }

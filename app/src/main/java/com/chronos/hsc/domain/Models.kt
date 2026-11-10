@@ -37,10 +37,15 @@ data class SubjectAnalyticsSummary(
     val totalSlices: Int,
     val completedSlices: Int,
     val totalProblemsSolved: Int,
-    val activeChainsCount: Int
+    val activeChainsCount: Int,
+    val customSubjectName: String? = null,
+    val customColorHex: Long? = null
 ) {
     val completionFraction: Float
         get() = if (totalSlices <= 0) 0f else (completedSlices.toFloat() / totalSlices.toFloat()).coerceIn(0f, 1f)
+
+    val displayName: String
+        get() = customSubjectName ?: subject.fullName
 }
 
 data class NeuroTelemetrySummary(
