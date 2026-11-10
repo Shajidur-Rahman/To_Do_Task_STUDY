@@ -16,6 +16,8 @@ import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.repository.StudyRepository
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.BatchExamRecord
+import com.chronos.hsc.data.store.BatchExamStore
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.HeatmapDayCell
 import com.chronos.hsc.domain.NeuroTelemetrySummary
@@ -86,7 +88,9 @@ data class StudyUiState(
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
     val isTaskRouletteOpen: Boolean = false,
-    val sprintTimerState: SprintTimerState? = null
+    val sprintTimerState: SprintTimerState? = null,
+    val isBatchExamModalOpen: Boolean = false,
+    val activeBatchExams: List<BatchExamRecord> = emptyList()
 )
 
 private data class ModalControlState(
@@ -99,7 +103,8 @@ private data class ModalControlState(
     val chainPendingDelete: TopicChainWithSlices? = null,
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
     val isTaskRouletteOpen: Boolean = false,
-    val sprintTimerState: SprintTimerState? = null
+    val sprintTimerState: SprintTimerState? = null,
+    val isBatchExamModalOpen: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -174,12 +179,19 @@ class StudyViewModel(
         coreDataFlow,
         analyticsAndChainsFlow,
         examAndNeuroFlow,
-        modalControlFlow
-    ) { core, analytics, examAndNeuro, modals ->
+        modalControlFlow,
+        BatchExamStore.batchExamsFlow
+    ) { core, analytics, examAndNeuro, modals, batchExams ->
         val (visible, hidden) = filterAndSortByBatteryMode(
             slices = core.dateSlices,
             batteryMode = core.batteryMode
         )
+        val activeExams = batchExams
+            .filter { !it.isCompleted }
+            .sortedWith(
+                compareBy<BatchExamRecord> { it.daysLeft(todayEpochDay) }
+                    .thenByDescending { it.aiImportanceScore }
+            )
         StudyUiState(
             todayEpochDay = todayEpochDay,
             selectedDateEpochDay = core.selectedDateEpochDay,
@@ -206,7 +218,9 @@ class StudyViewModel(
             chainPendingDelete = modals.chainPendingDelete,
             conqueredChainForEchoDialog = modals.conqueredChainForEchoDialog,
             isTaskRouletteOpen = modals.isTaskRouletteOpen,
-            sprintTimerState = modals.sprintTimerState
+            sprintTimerState = modals.sprintTimerState,
+            isBatchExamModalOpen = modals.isBatchExamModalOpen,
+            activeBatchExams = activeExams
         )
     }.stateIn(
         scope = viewModelScope,
@@ -278,6 +292,67 @@ class StudyViewModel(
 
     fun closeAddTopicModal() {
         modalControlFlow.update { it.copy(isAddTopicModalOpen = false) }
+    }
+
+    fun openBatchExamModal() {
+        modalControlFlow.update { it.copy(isBatchExamModalOpen = true) }
+    }
+
+    fun closeBatchExamModal() {
+        modalControlFlow.update { it.copy(isBatchExamModalOpen = false) }
+    }
+
+    fun saveBatchExam(exam: BatchExamRecord, autoCreateSlices: Boolean) {
+        BatchExamStore.addBatchExam(exam)
+        closeBatchExamModal()
+        if (autoCreateSlices) {
+            viewModelScope.launch {
+                repository.createExamPrepSlicesForRecord(exam, todayEpochDay)
+                _events.emit(
+                    StudyUiEvent.ShowSnackbar(
+                        message = "Scheduled ${exam.subjectName} Exam & added prep slices to Battleground! 🎯"
+                    )
+                )
+            }
+        } else {
+            viewModelScope.launch {
+                _events.emit(
+                    StudyUiEvent.ShowSnackbar(
+                        message = "Scheduled ${exam.subjectName} ${exam.batchOrCoachingName} Exam! 📝"
+                    )
+                )
+            }
+        }
+    }
+
+    fun deleteBatchExam(examId: String) {
+        BatchExamStore.deleteBatchExam(examId)
+        viewModelScope.launch {
+            _events.emit(StudyUiEvent.ShowSnackbar(message = "Deleted batch exam record."))
+        }
+    }
+
+    fun markBatchExamCompleted(examId: String, isCompleted: Boolean) {
+        BatchExamStore.markExamCompleted(examId, isCompleted)
+        viewModelScope.launch {
+            val msg = if (isCompleted) "Marked batch exam as Completed! 🏆" else "Restored batch exam to active."
+            _events.emit(StudyUiEvent.ShowSnackbar(message = msg))
+        }
+    }
+
+    fun incrementBatchExamStudyHours(examId: String, deltaHours: Float) {
+        BatchExamStore.incrementStudyHours(examId, deltaHours)
+    }
+
+    fun createExamPrepSlicesForExam(exam: BatchExamRecord) {
+        viewModelScope.launch {
+            repository.createExamPrepSlicesForRecord(exam, todayEpochDay)
+            _events.emit(
+                StudyUiEvent.ShowSnackbar(
+                    message = "Boosted Exam Prep slices for ${exam.subjectName} until exam day! 🚀"
+                )
+            )
+        }
     }
 
     fun createStructuredTopicChain(
@@ -464,14 +539,23 @@ class StudyViewModel(
                 stopSprintTimer()
             }
 
+            // Auto-log study hours for matching private exam if any
+            val sliceWithChain = SliceWithParentChain(
+                slice = result.completedSlice,
+                chain = result.parentChain,
+                siblingSlices = emptyList()
+            )
+            val matchedExam = BatchExamStore.logStudyHoursForMatchingSlice(sliceWithChain, 1.5f)
+
             if (result.didConquerFinalCoreSlice) {
                 modalControlFlow.update {
                     it.copy(conqueredChainForEchoDialog = result.parentChain)
                 }
             } else {
+                val examNote = if (matchedExam != null) " • +1.5h logged to ${matchedExam.batchOrCoachingName} prep! 🎯" else ""
                 _events.emit(
                     StudyUiEvent.ShowSnackbar(
-                        message = "Slashed ${result.completedSlice.shortBadge}! +${result.xpEarned} XP"
+                        message = "Slashed ${result.completedSlice.shortBadge}! +${result.xpEarned} XP$examNote"
                     )
                 )
             }
@@ -481,6 +565,15 @@ class StudyViewModel(
     fun uncompleteTaskSlice(sliceId: String) {
         viewModelScope.launch {
             val uncompleted = repository.uncompleteTaskSlice(sliceId) ?: return@launch
+            val parentChain = repository.getChainById(uncompleted.chainId)
+            if (parentChain != null) {
+                val sliceWithChain = SliceWithParentChain(
+                    slice = uncompleted,
+                    chain = parentChain,
+                    siblingSlices = emptyList()
+                )
+                BatchExamStore.logStudyHoursForMatchingSlice(sliceWithChain, -1.5f)
+            }
             _events.emit(
                 StudyUiEvent.ShowSnackbar(
                     message = "Restored ${uncompleted.shortBadge} to active! ↩️"

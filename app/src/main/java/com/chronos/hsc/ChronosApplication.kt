@@ -12,6 +12,7 @@ class ChronosApplication : Application() {
         super.onCreate()
         container = AppContainer(this)
         com.chronos.hsc.data.store.CustomSubjectAndAiStore.init(this)
+        com.chronos.hsc.data.store.BatchExamStore.init(this)
         com.chronos.hsc.notification.ChronosNotificationHelper.createNotificationChannels(this)
         com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDailyBriefing(this, enabled = true, forceUpdate = false)
         com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDominoAlerts(this, enabled = true, forceUpdate = false)

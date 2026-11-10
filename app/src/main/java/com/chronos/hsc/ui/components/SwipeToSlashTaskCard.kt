@@ -98,6 +98,9 @@ import com.chronos.hsc.ui.theme.TerrariumBorder
 import com.chronos.hsc.ui.theme.TerrariumSurface
 import com.chronos.hsc.ui.theme.TerrariumSurfaceElevated
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.BatchExamRecord
+import com.chronos.hsc.data.store.BatchExamStore
+import java.util.Locale
 import com.chronos.hsc.ui.components.NatureLadybugBorder
 import com.chronos.hsc.ui.components.NatureVineSwipeOverlay
 import kotlinx.coroutines.launch
@@ -124,10 +127,14 @@ fun SwipeToSlashTaskCard(
     onPushDominoPlusOneDay: () -> Unit,
     onRequestDelete: () -> Unit,
     onCatchUpToToday: () -> Unit = {},
+    matchingBatchExam: BatchExamRecord? = null,
     modifier: Modifier = Modifier
 ) {
     val slice = item.slice
     val chain = item.chain
+    val effectiveBatchExam = matchingBatchExam ?: remember(chain.chainId, todayEpochDay) {
+        BatchExamStore.findMatchingActiveExam(item, todayEpochDay)
+    }
     val customSub = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
     val subjectColor = if (customSub != null) {
         Color(customSub.colorHex)
@@ -397,6 +404,51 @@ fun SwipeToSlashTaskCard(
                 .padding(start = 15.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
+                // 0. Visual Urgent Private / Batch Exam Radar Banner
+                if (effectiveBatchExam != null) {
+                    val examDays = effectiveBatchExam.daysLeft(todayEpochDay)
+                    val daysText = when {
+                        examDays == 0L -> "TODAY"
+                        examDays < 0L -> "${-examDays}d AGO"
+                        else -> "${examDays}d"
+                    }
+                    val reqHours = String.format(Locale.US, "%.1f", effectiveBatchExam.remainingStudyHours)
+                    val examFormat = effectiveBatchExam.formatSummary
+                    val isUrgentExam = examDays <= 2L
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(
+                                        (if (isNature) NatureAutumnOrange else Color(0xFFE040FB)).copy(alpha = 0.22f),
+                                        (if (isNature) NatureLagRust else Color(0xFFFF1744)).copy(alpha = 0.22f)
+                                    )
+                                )
+                            )
+                            .border(
+                                1.dp,
+                                if (isUrgentExam) Color(0xFFFF1744).copy(alpha = 0.9f)
+                                else (if (isNature) NatureAutumnOrange else Color(0xFFE040FB)).copy(alpha = 0.7f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 9.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "🎯 PRIVATE EXAM IN $daysText • $examFormat • Need ~${reqHours}h",
+                            color = if (isUrgentExam) Color(0xFFFF5252) else (if (isNature) NatureAutumnOrange else Color(0xFFFF80AB)),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 // 1. Top Boss Health Bar for this task's parent chapter chain
                 BossHealthBar(
                     chain = chain,

@@ -1,6 +1,6 @@
 {
-  "versionCode": 13,
-  "versionName": "1.3.4",
-  "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/releases/download/v1.3.4/app-release.apk",
-  "releaseNotes": "Chronos HSC v1.3.4: Zero-Data-Loss Custom Subject Creator (+) with Cognitive Load Weighting & Neon Swatches, Live Un-Cached Gemini 3.8 Flash Behavioral Task Roulette Engine with automatic user override detection, multi-model fallback chain, and rich cognitive transition telemetry."
+  "versionCode": 14,
+  "versionName": "1.3.5",
+  "apkUrl": "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/releases/download/v1.3.5/app-release.apk",
+  "releaseNotes": "Chronos HSC v1.3.5: Private/Coaching Batch Exam Radar, MCQ/CQ Weight Analyzer, 3-Tier Tactical Floating Action Button Stack, Live Gemini 3.8 Flash Exam-First Task Roulette Prioritization, and Auto Exam Prep Slice Generator."
 }

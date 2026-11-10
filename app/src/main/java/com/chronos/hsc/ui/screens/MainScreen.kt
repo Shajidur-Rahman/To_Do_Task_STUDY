@@ -98,6 +98,8 @@ import com.chronos.hsc.notification.ChronosNotificationHelper
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.ui.components.AccountabilityCardModal
 import com.chronos.hsc.ui.components.AddHscTopicModal
+import com.chronos.hsc.ui.components.BatchExamFloatingButton
+import com.chronos.hsc.ui.components.BatchExamRadarModal
 import com.chronos.hsc.ui.components.BossHealthBar
 import com.chronos.hsc.ui.components.CascadeDeleteDialog
 import com.chronos.hsc.ui.components.EbbinghausEchoDialog
@@ -214,16 +216,23 @@ fun MainScreen(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Upper Button: Exam Countdown Pill Button
+                        // 1. TOP BUTTON: Private/Coaching Batch Exam Radar Button
+                        BatchExamFloatingButton(
+                            activeExams = state.activeBatchExams,
+                            todayEpochDay = state.todayEpochDay,
+                            onClick = { viewModel.openBatchExamModal() }
+                        )
+
+                        // 2. MIDDLE BUTTON: Exam Countdown Pill Button
                         ExamCountdownFloatingButton(
                             todayEpochDay = state.todayEpochDay,
                             activeExam = state.pinnedExam,
                             onClick = { viewModel.openExamCountdownModal() }
                         )
 
-                        // Bottom Button: Existing cyan / green + Add Study Topic FAB
+                        // 3. BOTTOM BUTTON: Existing cyan / green + Add Study Topic FAB
                         ExtendedFloatingActionButton(
                             onClick = { viewModel.openAddTopicModal() },
                             containerColor = accentColor,
@@ -429,6 +438,20 @@ fun MainScreen(
                 },
                 morningBriefingEnabled = state.morningBriefingEnabled,
                 dominoAlertsEnabled = state.dominoAlertsEnabled
+            )
+        }
+
+        // 7. Private / Coaching Batch Exam Radar & MCQ/CQ Weight Analyzer Modal
+        if (state.isBatchExamModalOpen) {
+            BatchExamRadarModal(
+                activeExams = state.activeBatchExams,
+                todayEpochDay = state.todayEpochDay,
+                onDismiss = viewModel::closeBatchExamModal,
+                onSaveExam = viewModel::saveBatchExam,
+                onDeleteExam = viewModel::deleteBatchExam,
+                onMarkCompleted = viewModel::markBatchExamCompleted,
+                onIncrementStudyHours = viewModel::incrementBatchExamStudyHours,
+                onAutoCreateSlicesForExam = viewModel::createExamPrepSlicesForExam
             )
         }
     }
@@ -780,7 +803,8 @@ private fun TodayBattlegroundTab(
                         onUncompleteSlice = { onUncompleteSlice(sliceWithChain.slice.sliceId) },
                         onPushDominoPlusOneDay = { onPushDominoPlusOne(sliceWithChain) },
                         onRequestDelete = { onRequestDeleteSlice(sliceWithChain) },
-                        onCatchUpToToday = { onCatchUpSlice(sliceWithChain.slice.sliceId) }
+                        onCatchUpToToday = { onCatchUpSlice(sliceWithChain.slice.sliceId) },
+                        matchingBatchExam = state.activeBatchExams.firstOrNull { it.matchesSlice(sliceWithChain) }
                     )
                 }
             }

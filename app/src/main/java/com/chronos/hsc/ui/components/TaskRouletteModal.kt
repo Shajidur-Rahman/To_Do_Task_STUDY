@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import com.chronos.hsc.data.service.GeminiRouletteService
 import com.chronos.hsc.data.store.AiRouletteRecommendation
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.BatchExamStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import androidx.compose.runtime.Composable
@@ -113,7 +114,10 @@ fun TaskRouletteModal(
             lockedItem = null
             scope.launch {
                 val aiDeferred = async(Dispatchers.IO) {
-                    GeminiRouletteService.analyzeAndSpinLiveRoulette(incompleteSlices)
+                    GeminiRouletteService.analyzeAndSpinLiveRoulette(
+                        candidateSlices = incompleteSlices,
+                        upcomingBatchExams = BatchExamStore.getActiveUpcomingExams()
+                    )
                 }
 
                 val poolSize = incompleteSlices.size.coerceAtLeast(1)
@@ -139,7 +143,11 @@ fun TaskRouletteModal(
                 isAiAnalyzing = false
 
                 val winner = incompleteSlices.find { it.slice.sliceId == rec?.selectedSliceId }
-                    ?: incompleteSlices.random()
+                    ?: run {
+                        val urgentExams = BatchExamStore.getActiveUpcomingExams().filter { it.daysLeft() <= 5L && it.remainingStudyHours > 0f }
+                        incompleteSlices.firstOrNull { slice -> urgentExams.any { it.matchesSlice(slice) } }
+                            ?: incompleteSlices.random()
+                    }
                 val targetWinnerIdx = incompleteSlices.indexOf(winner).coerceAtLeast(0)
 
                 val currentMod = step % poolSize

@@ -18,6 +18,7 @@ import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.BatchExamRecord
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.DominoShiftResult
 import com.chronos.hsc.domain.HeatmapDayCell
@@ -339,6 +340,60 @@ class StudyRepository(
         dao.insertChainWithSlices(parentChain, slices)
         ChronosWidgetUpdater.requestUpdate(appContext)
         return parentChain
+    }
+
+    suspend fun getChainById(chainId: String): StudyTopicChain? {
+        return dao.getChainById(chainId)
+    }
+
+    suspend fun createExamPrepSlicesForRecord(
+        exam: BatchExamRecord,
+        todayEpochDay: Long = LocalDate.now().toEpochDay()
+    ): StudyTopicChain {
+        val daysUntilExam = (exam.examDateEpochDay - todayEpochDay).toInt()
+        val totalDays = if (daysUntilExam <= 0) 1 else daysUntilExam.coerceIn(1, 14)
+
+        // Parse chapter number
+        val regex = Regex("""\b(\d+)\b""")
+        val match = regex.find(exam.chapterNumbersAndTitles)
+        val chapterNum = match?.value?.toIntOrNull() ?: 1
+
+        // Match subject
+        val customSub = CustomSubjectAndAiStore.getCustomSubjects().firstOrNull {
+            it.name.equals(exam.subjectName, ignoreCase = true)
+        }
+        val hscSub = if (customSub != null) {
+            customSub.baseSubject
+        } else {
+            HscSubject.entries.firstOrNull {
+                it.fullName.equals(exam.subjectName, ignoreCase = true) ||
+                it.name.equals(exam.subjectName, ignoreCase = true) ||
+                it.shortCode.equals(exam.subjectName, ignoreCase = true)
+            } ?: HscSubject.PHYSICS
+        }
+
+        // Paper
+        val paper = when {
+            exam.paperName.contains("2nd", ignoreCase = true) || exam.paperName.contains("2", ignoreCase = true) -> HscPaper.SECOND_PAPER
+            exam.paperName.contains("1st", ignoreCase = true) || exam.paperName.contains("1", ignoreCase = true) -> HscPaper.FIRST_PAPER
+            else -> HscPaper.SINGLE
+        }
+
+        val prepTitle = "[🎯 EXAM PREP: ${exam.formatSummary}] ${exam.chapterNumbersAndTitles}"
+        val dailyProblems = (exam.mcqCount / totalDays).coerceIn(5, 30)
+
+        return createStructuredTopicChain(
+            subject = hscSub,
+            paper = paper,
+            chapterNumber = chapterNum,
+            chapterName = prepTitle,
+            totalDays = totalDays,
+            startDateEpochDay = todayEpochDay,
+            distributionCurve = DistributionCurve.CONCEPT_TO_PROBLEM,
+            dailyProblemTarget = dailyProblems,
+            energyLevel = EnergyLevel.HIGH_FOCUS,
+            customSubjectId = customSub?.id
+        )
     }
 
     /**
