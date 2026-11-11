@@ -135,6 +135,8 @@ object CustomSubjectAndAiStore {
     const val MODEL_GEMINI_3_8_FLASH = "gemini-3.8-flash"
     const val MODEL_GEMINI_3_5_FLASH = "gemini-3.5-flash"
     const val MODEL_GEMINI_2_5_FLASH = "gemini-2.5-flash"
+    const val ROULETTE_PASSCODE = "4488"
+    private const val KEY_ROULETTE_UNLOCKED = "key_roulette_security_unlocked"
 
     val COLOR_PRESETS = listOf(
         0xFF00E5FF, // Cyan
@@ -333,6 +335,22 @@ object CustomSubjectAndAiStore {
 
     fun setSelectedModel(model: String) {
         getPrefs().edit().putString(KEY_MODEL, model.trim()).apply()
+    }
+
+    fun isRouletteUnlocked(): Boolean {
+        return getPrefs().getBoolean(KEY_ROULETTE_UNLOCKED, false)
+    }
+
+    fun setRouletteUnlocked(unlocked: Boolean = true) {
+        getPrefs().edit().putBoolean(KEY_ROULETTE_UNLOCKED, unlocked).apply()
+    }
+
+    fun verifyPasscode(input: String): Boolean {
+        if (input.trim() == ROULETTE_PASSCODE) {
+            setRouletteUnlocked(true)
+            return true
+        }
+        return false
     }
 
     @Synchronized

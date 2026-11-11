@@ -21,15 +21,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -37,8 +41,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.TextStyle
 import com.chronos.hsc.data.service.GeminiRouletteService
 import com.chronos.hsc.data.store.AiRouletteRecommendation
 import com.chronos.hsc.data.store.BatchExamStore
@@ -101,6 +111,7 @@ fun TaskRouletteModal(
     var isSpinning by remember { mutableStateOf(false) }
     var isAiAnalyzing by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showPasscodeDialog by remember { mutableStateOf(false) }
     var aiRecommendation by remember { mutableStateOf<AiRouletteRecommendation?>(CustomSubjectAndAiStore.getLastRecommendation()) }
     var highlightedIndex by remember { mutableIntStateOf(0) }
     var lockedItem by remember(sprintTimerState?.targetSliceId, incompleteSlices) {
@@ -162,6 +173,14 @@ fun TaskRouletteModal(
                 view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                 onLockedSlice(winner)
             }
+        }
+    }
+
+    val onTriggerSpin: () -> Unit = {
+        if (!CustomSubjectAndAiStore.isRouletteUnlocked()) {
+            showPasscodeDialog = true
+        } else {
+            spinRoulette()
         }
     }
 
@@ -348,7 +367,7 @@ fun TaskRouletteModal(
                     // Spin Button (when not currently running a 25-min sprint)
                     if (sprintTimerState?.isSprintRunning != true) {
                         Button(
-                            onClick = { spinRoulette() },
+                            onClick = { onTriggerSpin() },
                             enabled = !isSpinning && incompleteSlices.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isSpinning) CyberAmber else CyberMagenta,
@@ -454,7 +473,7 @@ fun TaskRouletteModal(
                                             if (currentWinner != null) {
                                                 CustomSubjectAndAiStore.addRejectedSlice(currentWinner.slice.sliceId)
                                             }
-                                            spinRoulette()
+                                            onTriggerSpin()
                                         },
                                         border = BorderStroke(1.dp, CyberAmber.copy(alpha = 0.7f)),
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberAmber),
@@ -673,5 +692,210 @@ fun TaskRouletteModal(
         AiRouletteSettingsDialog(
             onDismiss = { showSettingsDialog = false }
         )
+    }
+
+    if (showPasscodeDialog) {
+        RouletteSecurityPasscodeDialog(
+            onDismiss = { showPasscodeDialog = false },
+            onUnlocked = {
+                showPasscodeDialog = false
+                spinRoulette()
+            }
+        )
+    }
+}
+
+@Composable
+fun RouletteSecurityPasscodeDialog(
+    onDismiss: () -> Unit,
+    onUnlocked: () -> Unit
+) {
+    var passcodeInput by remember { mutableStateOf("") }
+    var isError by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+    val view = LocalView.current
+
+    val submitPasscode: () -> Unit = {
+        if (CustomSubjectAndAiStore.verifyPasscode(passcodeInput)) {
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            onUnlocked()
+        } else {
+            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            isError = true
+            errorMessage = "Incorrect passcode. Please try again."
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = ObsidianSurface,
+            border = BorderStroke(1.5.dp, CyberMagenta),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = CyberMagenta,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "SECURITY ACCESS CODE",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.5.sp,
+                            color = CyberMagenta
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = CyberMagenta.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, CyberMagenta.copy(alpha = 0.35f)),
+                    modifier = Modifier.size(60.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = CyberMagenta,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "API Key Spam Protection",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Please enter the 4-digit security code to unlock the AI Task Roulette Engine. You only need to verify this once.",
+                    fontSize = 12.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = passcodeInput,
+                    onValueChange = { newValue ->
+                        if (newValue.length <= 4 && newValue.all { it.isDigit() }) {
+                            passcodeInput = newValue
+                            isError = false
+                            if (newValue.length == 4) {
+                                if (CustomSubjectAndAiStore.verifyPasscode(newValue)) {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    onUnlocked()
+                                } else {
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    isError = true
+                                    errorMessage = "Incorrect passcode (4 digits). Try again."
+                                }
+                            }
+                        }
+                    },
+                    label = { Text("4-Digit Passcode") },
+                    placeholder = { Text("••••") },
+                    singleLine = true,
+                    isError = isError,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = { submitPasscode() }
+                    ),
+                    visualTransformation = PasswordVisualTransformation(),
+                    textStyle = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        letterSpacing = 6.sp,
+                        color = TextPrimary
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CyberMagenta,
+                        unfocusedBorderColor = ObsidianBorder,
+                        errorBorderColor = CyberCrimson,
+                        focusedLabelColor = CyberMagenta,
+                        unfocusedLabelColor = TextSecondary,
+                        errorLabelColor = CyberCrimson
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(0.85f)
+                )
+
+                if (isError) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = errorMessage,
+                        color = CyberCrimson,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        border = BorderStroke(1.dp, ObsidianBorder),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Cancel", color = TextSecondary)
+                    }
+
+                    Button(
+                        onClick = submitPasscode,
+                        enabled = passcodeInput.length == 4,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CyberMagenta,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Unlock", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
