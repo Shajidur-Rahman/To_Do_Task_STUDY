@@ -106,65 +106,94 @@ class UpdateManager(private val context: Context) {
                     totalBytes = 0
                 )
 
-                // Follow redirects manually to handle GitHub Release 302 -> S3/objects.githubusercontent.com
-                var currentUrl = updateInfo.apkUrl
-                var connection: HttpURLConnection
-                var redirectCount = 0
+                // Multi-mirror fallback list (direct CDN, repo mirrors, and latest release)
+                val mirrorUrls = listOf(
+                    updateInfo.apkUrl,
+                    "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/release/app-release.apk",
+                    "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/Chronos_HSC_Smart_Study_Engine.apk",
+                    "https://github.com/Shajidur-Rahman/To_Do_Task_STUDY/releases/latest/download/app-release.apk"
+                ).distinct().filter { it.isNotBlank() }
 
-                while (true) {
-                    connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                        connectTimeout = 15000
-                        readTimeout = 15000
-                        instanceFollowRedirects = false
-                        setRequestProperty("User-Agent", "ChronosHSC-Updater")
-                    }
+                var downloadSuccess = false
+                var lastErrorMessage = "Unknown network error"
 
-                    val code = connection.responseCode
-                    if (code == HttpURLConnection.HTTP_MOVED_PERM ||
-                        code == HttpURLConnection.HTTP_MOVED_TEMP ||
-                        code == HttpURLConnection.HTTP_SEE_OTHER ||
-                        code == 307 || code == 308
-                    ) {
-                        currentUrl = connection.getHeaderField("Location") ?: break
-                        redirectCount++
-                        if (redirectCount > 8) break
-                    } else {
-                        break
-                    }
-                }
+                for (sourceUrl in mirrorUrls) {
+                    try {
+                        var currentUrl = sourceUrl
+                        var connection: HttpURLConnection? = null
+                        var redirectCount = 0
 
-                val totalLength = connection.contentLength.toLong()
-                var downloaded: Long = 0
+                        while (true) {
+                            connection?.disconnect()
+                            connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                                connectTimeout = 20000
+                                readTimeout = 25000
+                                instanceFollowRedirects = false
+                                setRequestProperty("User-Agent", "ChronosHSC-Updater")
+                            }
 
-                connection.inputStream.use { input ->
-                    FileOutputStream(targetApk).use { output ->
-                        val buffer = ByteArray(8 * 1024)
-                        var read: Int
-                        var lastReportTime = System.currentTimeMillis()
-
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            downloaded += read
-
-                            val now = System.currentTimeMillis()
-                            if (now - lastReportTime > 150 || downloaded == totalLength) {
-                                lastReportTime = now
-                                val percent = if (totalLength > 0) {
-                                    ((downloaded * 100) / totalLength).toInt().coerceIn(0, 100)
-                                } else 0
-
-                                _downloadState.value = UpdateDownloadState.Downloading(
-                                    progressPercent = percent,
-                                    downloadedBytes = downloaded,
-                                    totalBytes = totalLength
-                                )
+                            val code = connection.responseCode
+                            if (code in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_SEE_OTHER, 307, 308)) {
+                                currentUrl = connection.getHeaderField("Location") ?: break
+                                redirectCount++
+                                if (redirectCount > 8) break
+                            } else {
+                                break
                             }
                         }
-                        output.flush()
+
+                        val finalConn = connection ?: continue
+                        if (finalConn.responseCode !in 200..299) {
+                            lastErrorMessage = "HTTP ${finalConn.responseCode} on $sourceUrl"
+                            finalConn.disconnect()
+                            continue
+                        }
+
+                        val totalLength = finalConn.contentLength.toLong()
+                        var downloaded: Long = 0
+
+                        finalConn.inputStream.use { input ->
+                            FileOutputStream(targetApk).use { output ->
+                                val buffer = ByteArray(16 * 1024)
+                                var read: Int
+                                var lastReportTime = System.currentTimeMillis()
+
+                                while (input.read(buffer).also { read = it } != -1) {
+                                    output.write(buffer, 0, read)
+                                    downloaded += read
+
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastReportTime > 150 || downloaded == totalLength) {
+                                        lastReportTime = now
+                                        val percent = if (totalLength > 0) {
+                                            ((downloaded * 100) / totalLength).toInt().coerceIn(0, 100)
+                                        } else 0
+
+                                        _downloadState.value = UpdateDownloadState.Downloading(
+                                            progressPercent = percent,
+                                            downloadedBytes = downloaded,
+                                            totalBytes = totalLength
+                                        )
+                                    }
+                                }
+                                output.flush()
+                            }
+                        }
+                        finalConn.disconnect()
+
+                        if (targetApk.exists() && targetApk.length() > 1_000_000L) {
+                            downloadSuccess = true
+                            break
+                        } else {
+                            lastErrorMessage = "Downloaded file too small (${targetApk.length()} bytes)"
+                            if (targetApk.exists()) targetApk.delete()
+                        }
+                    } catch (e: Exception) {
+                        lastErrorMessage = e.localizedMessage ?: "Connection error"
                     }
                 }
 
-                if (targetApk.exists() && targetApk.length() > 0) {
+                if (downloadSuccess && targetApk.exists() && targetApk.length() > 0) {
                     val apkUri = FileProvider.getUriForFile(
                         context,
                         "${context.packageName}.fileprovider",
@@ -175,7 +204,7 @@ class UpdateManager(private val context: Context) {
                         launchInstallFlow(targetApk, apkUri)
                     }
                 } else {
-                    _downloadState.value = UpdateDownloadState.Error("Downloaded APK is empty or failed to write.")
+                    _downloadState.value = UpdateDownloadState.Error("Update download failed: $lastErrorMessage")
                 }
             } catch (e: Exception) {
                 _downloadState.value = UpdateDownloadState.Error("Update download failed: ${e.localizedMessage ?: "Network error"}")
