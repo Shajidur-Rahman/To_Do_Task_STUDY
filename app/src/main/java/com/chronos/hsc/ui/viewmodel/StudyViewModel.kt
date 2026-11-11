@@ -15,9 +15,11 @@ import com.chronos.hsc.data.local.StudyTopicChain
 import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.repository.StudyRepository
+import com.chronos.hsc.data.service.GeminiRouletteService
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.BatchExamRecord
 import com.chronos.hsc.data.store.BatchExamStore
+import com.chronos.hsc.data.store.WorkloadBucket
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.HeatmapDayCell
 import com.chronos.hsc.domain.NeuroTelemetrySummary
@@ -90,8 +92,14 @@ data class StudyUiState(
     val isTaskRouletteOpen: Boolean = false,
     val sprintTimerState: SprintTimerState? = null,
     val isBatchExamModalOpen: Boolean = false,
-    val activeBatchExams: List<BatchExamRecord> = emptyList()
-)
+    val activeBatchExams: List<BatchExamRecord> = emptyList(),
+    val todaySlices: List<SliceWithParentChain> = emptyList()
+) {
+    val rouletteCandidatePool: List<SliceWithParentChain>
+        get() = (overdueSlices + todaySlices + rawDateSlices)
+            .distinctBy { it.slice.sliceId }
+            .filter { !it.slice.isCompleted && it.slice.scheduledDateEpochDay <= todayEpochDay }
+}
 
 private data class ModalControlState(
     val isAddTopicModalOpen: Boolean = false,
@@ -133,19 +141,27 @@ class StudyViewModel(
         repository.observeSlicesForDate(epochDay)
     }
 
-    private val coreDataFlow = combine(
+    private val dateSlicesBundleFlow = combine(
         selectedDateFlow,
-        batteryModeFlow,
-        repository.observeUserStats(),
         slicesForSelectedDateFlow,
+        repository.observeSlicesForDate(todayEpochDay),
         repository.observeOverdueSlices(todayEpochDay)
-    ) { selectedDate, batteryMode, userStats, dateSlices, overdueSlices ->
+    ) { selectedDate, dateSlices, todaySlices, overdueSlices ->
+        DateSlicesBundle(selectedDate, dateSlices, todaySlices, overdueSlices)
+    }
+
+    private val coreDataFlow = combine(
+        dateSlicesBundleFlow,
+        batteryModeFlow,
+        repository.observeUserStats()
+    ) { bundle, batteryMode, userStats ->
         CoreDashboardData(
-            selectedDateEpochDay = selectedDate,
+            selectedDateEpochDay = bundle.selectedDateEpochDay,
             batteryMode = batteryMode,
             userStats = userStats,
-            dateSlices = dateSlices,
-            overdueSlices = overdueSlices
+            dateSlices = bundle.dateSlices,
+            overdueSlices = bundle.overdueSlices,
+            todaySlices = bundle.todaySlices
         )
     }
 
@@ -220,7 +236,8 @@ class StudyViewModel(
             isTaskRouletteOpen = modals.isTaskRouletteOpen,
             sprintTimerState = modals.sprintTimerState,
             isBatchExamModalOpen = modals.isBatchExamModalOpen,
-            activeBatchExams = activeExams
+            activeBatchExams = activeExams,
+            todaySlices = core.todaySlices
         )
     }.stateIn(
         scope = viewModelScope,
@@ -547,6 +564,16 @@ class StudyViewModel(
             )
             val matchedExam = BatchExamStore.logStudyHoursForMatchingSlice(sliceWithChain, 1.5f)
 
+            // Record completed slice in rotation telemetry
+            val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(result.parentChain.chainId)
+            val subName = customLink?.customSubjectName ?: result.parentChain.subject.fullName
+            val bucket = when {
+                result.completedSlice.scheduledDateEpochDay < todayEpochDay || result.completedSlice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+                matchedExam != null || BatchExamStore.getActiveUpcomingExams().any { it.matchesSlice(sliceWithChain) } -> WorkloadBucket.BATCH_EXAM
+                else -> WorkloadBucket.TODAY_NORMAL
+            }
+            CustomSubjectAndAiStore.recordCompletedSlice(bucket, subName, todayEpochDay)
+
             if (result.didConquerFinalCoreSlice) {
                 modalControlFlow.update {
                     it.copy(conqueredChainForEchoDialog = result.parentChain)
@@ -626,6 +653,21 @@ class StudyViewModel(
 
     fun onRouletteLockedSlice(slice: SliceWithParentChain) {
         sprintCountdownJob?.cancel()
+        val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(slice.chain.chainId)
+        val subName = customLink?.customSubjectName ?: slice.chain.subject.fullName
+        val bucket = when {
+            slice.slice.scheduledDateEpochDay < todayEpochDay || slice.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+            BatchExamStore.getActiveUpcomingExams().any { it.matchesSlice(slice) } -> WorkloadBucket.BATCH_EXAM
+            else -> WorkloadBucket.TODAY_NORMAL
+        }
+        CustomSubjectAndAiStore.recordSpin(
+            sliceId = slice.slice.sliceId,
+            title = slice.slice.displayTitle,
+            subjectName = subName,
+            category = GeminiRouletteService.getCognitiveCategory(slice),
+            bucket = bucket,
+            todayEpochDay = todayEpochDay
+        )
         modalControlFlow.update {
             it.copy(
                 sprintTimerState = SprintTimerState(
@@ -831,12 +873,20 @@ class StudyViewModel(
         ChronosWorkScheduler.scheduleDominoAlerts(context, enabled, forceUpdate = true)
     }
 
+    private data class DateSlicesBundle(
+        val selectedDateEpochDay: Long,
+        val dateSlices: List<SliceWithParentChain>,
+        val todaySlices: List<SliceWithParentChain>,
+        val overdueSlices: List<SliceWithParentChain>
+    )
+
     private data class CoreDashboardData(
         val selectedDateEpochDay: Long,
         val batteryMode: EnergyLevel,
         val userStats: UserStats,
         val dateSlices: List<SliceWithParentChain>,
-        val overdueSlices: List<SliceWithParentChain>
+        val overdueSlices: List<SliceWithParentChain>,
+        val todaySlices: List<SliceWithParentChain>
     )
 
     private data class AnalyticsAndChainsData(

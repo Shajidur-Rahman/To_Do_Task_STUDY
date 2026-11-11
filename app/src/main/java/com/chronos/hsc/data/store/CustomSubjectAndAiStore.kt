@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.chronos.hsc.data.local.HscSubject
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 import java.util.UUID
 
 enum class CognitiveLoadCategory(
@@ -60,11 +61,34 @@ data class CustomSubjectLink(
     val hasSecondPaper: Boolean get() = !isSinglePaperOnly
 }
 
+enum class WorkloadBucket(val label: String, val emoji: String) {
+    COMEBACK_LEFTOVER("Yesterday's Leftover / Comeback", "🔥"),
+    TODAY_NORMAL("Today's Regular Syllabus", "📅"),
+    BATCH_EXAM("Private / Coaching Batch Exam", "📝");
+
+    companion object {
+        fun fromString(name: String?): WorkloadBucket {
+            return entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: TODAY_NORMAL
+        }
+    }
+}
+
+data class BucketRotationTelemetry(
+    val spinsComeback: Int = 0,
+    val spinsTodayNormal: Int = 0,
+    val spinsBatchExam: Int = 0,
+    val completedComeback: Int = 0,
+    val completedTodayNormal: Int = 0,
+    val completedBatchExam: Int = 0,
+    val recentSubjects: List<String> = emptyList()
+)
+
 data class LastSpunRecord(
     val sliceId: String,
     val title: String,
     val subjectName: String,
     val cognitiveCategory: CognitiveLoadCategory,
+    val workloadBucket: WorkloadBucket = WorkloadBucket.TODAY_NORMAL,
     val timestamp: Long
 )
 
@@ -86,6 +110,14 @@ object CustomSubjectAndAiStore {
     private const val KEY_MODEL = "key_gemini_selected_model"
     private const val KEY_LAST_SPUN = "key_last_spun_record_json"
     private const val KEY_LAST_RECOMMENDATION = "key_last_ai_recommendation_json"
+    private const val KEY_ROTATION_DATE = "key_rotation_date_epoch"
+    private const val KEY_SPINS_COMEBACK = "key_spins_comeback"
+    private const val KEY_SPINS_NORMAL = "key_spins_normal"
+    private const val KEY_SPINS_BATCH = "key_spins_batch"
+    private const val KEY_DONE_COMEBACK = "key_done_comeback"
+    private const val KEY_DONE_NORMAL = "key_done_normal"
+    private const val KEY_DONE_BATCH = "key_done_batch"
+    private const val KEY_RECENT_SUBJECTS = "key_recent_subjects_json"
 
     val DEFAULT_API_KEY: String by lazy {
         try {
@@ -310,6 +342,7 @@ object CustomSubjectAndAiStore {
             put("title", record.title)
             put("subjectName", record.subjectName)
             put("cognitiveCategory", record.cognitiveCategory.name)
+            put("workloadBucket", record.workloadBucket.name)
             put("timestamp", record.timestamp)
         }
         getPrefs().edit().putString(KEY_LAST_SPUN, obj.toString()).apply()
@@ -321,17 +354,128 @@ object CustomSubjectAndAiStore {
         return try {
             val obj = JSONObject(raw)
             val catName = obj.optString("cognitiveCategory", CognitiveLoadCategory.BALANCED_CONCEPTUAL.name)
+            val bucketName = obj.optString("workloadBucket", WorkloadBucket.TODAY_NORMAL.name)
             LastSpunRecord(
                 sliceId = obj.getString("sliceId"),
                 title = obj.getString("title"),
                 subjectName = obj.getString("subjectName"),
                 cognitiveCategory = runCatching { CognitiveLoadCategory.valueOf(catName) }
                     .getOrDefault(CognitiveLoadCategory.BALANCED_CONCEPTUAL),
+                workloadBucket = WorkloadBucket.fromString(bucketName),
                 timestamp = obj.getLong("timestamp")
             )
         } catch (_: Exception) {
             null
         }
+    }
+
+    @Synchronized
+    private fun ensureRotationDate(todayEpochDay: Long) {
+        val sp = getPrefs()
+        val lastEpoch = sp.getLong(KEY_ROTATION_DATE, -1L)
+        if (lastEpoch != todayEpochDay) {
+            sp.edit()
+                .putLong(KEY_ROTATION_DATE, todayEpochDay)
+                .putInt(KEY_SPINS_COMEBACK, 0)
+                .putInt(KEY_SPINS_NORMAL, 0)
+                .putInt(KEY_SPINS_BATCH, 0)
+                .putInt(KEY_DONE_COMEBACK, 0)
+                .putInt(KEY_DONE_NORMAL, 0)
+                .putInt(KEY_DONE_BATCH, 0)
+                .putString(KEY_RECENT_SUBJECTS, "[]")
+                .apply()
+        }
+    }
+
+    @Synchronized
+    fun recordSpin(
+        sliceId: String,
+        title: String,
+        subjectName: String,
+        category: CognitiveLoadCategory,
+        bucket: WorkloadBucket,
+        todayEpochDay: Long = LocalDate.now().toEpochDay()
+    ) {
+        ensureRotationDate(todayEpochDay)
+        val sp = getPrefs()
+        saveLastSpunRecord(
+            LastSpunRecord(
+                sliceId = sliceId,
+                title = title,
+                subjectName = subjectName,
+                cognitiveCategory = category,
+                workloadBucket = bucket,
+                timestamp = System.currentTimeMillis()
+            )
+        )
+        val key = when (bucket) {
+            WorkloadBucket.COMEBACK_LEFTOVER -> KEY_SPINS_COMEBACK
+            WorkloadBucket.TODAY_NORMAL -> KEY_SPINS_NORMAL
+            WorkloadBucket.BATCH_EXAM -> KEY_SPINS_BATCH
+        }
+        val currentSpins = sp.getInt(key, 0)
+        sp.edit().putInt(key, currentSpins + 1).apply()
+        pushRecentSubject(subjectName)
+    }
+
+    @Synchronized
+    fun recordCompletedSlice(
+        bucket: WorkloadBucket,
+        subjectName: String,
+        todayEpochDay: Long = LocalDate.now().toEpochDay()
+    ) {
+        ensureRotationDate(todayEpochDay)
+        val sp = getPrefs()
+        val key = when (bucket) {
+            WorkloadBucket.COMEBACK_LEFTOVER -> KEY_DONE_COMEBACK
+            WorkloadBucket.TODAY_NORMAL -> KEY_DONE_NORMAL
+            WorkloadBucket.BATCH_EXAM -> KEY_DONE_BATCH
+        }
+        val currentDone = sp.getInt(key, 0)
+        sp.edit().putInt(key, currentDone + 1).apply()
+        pushRecentSubject(subjectName)
+    }
+
+    @Synchronized
+    private fun pushRecentSubject(subjectName: String) {
+        if (subjectName.isBlank()) return
+        val sp = getPrefs()
+        val raw = sp.getString(KEY_RECENT_SUBJECTS, "[]") ?: "[]"
+        val list = mutableListOf<String>()
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                list.add(arr.getString(i))
+            }
+        } catch (_: Exception) {}
+        list.add(subjectName)
+        val trimmed = list.takeLast(3)
+        val newArr = JSONArray(trimmed)
+        sp.edit().putString(KEY_RECENT_SUBJECTS, newArr.toString()).apply()
+    }
+
+    @Synchronized
+    fun getBucketRotationTelemetry(todayEpochDay: Long = LocalDate.now().toEpochDay()): BucketRotationTelemetry {
+        ensureRotationDate(todayEpochDay)
+        val sp = getPrefs()
+        val raw = sp.getString(KEY_RECENT_SUBJECTS, "[]") ?: "[]"
+        val subjects = mutableListOf<String>()
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                subjects.add(arr.getString(i))
+            }
+        } catch (_: Exception) {}
+
+        return BucketRotationTelemetry(
+            spinsComeback = sp.getInt(KEY_SPINS_COMEBACK, 0),
+            spinsTodayNormal = sp.getInt(KEY_SPINS_NORMAL, 0),
+            spinsBatchExam = sp.getInt(KEY_SPINS_BATCH, 0),
+            completedComeback = sp.getInt(KEY_DONE_COMEBACK, 0),
+            completedTodayNormal = sp.getInt(KEY_DONE_NORMAL, 0),
+            completedBatchExam = sp.getInt(KEY_DONE_BATCH, 0),
+            recentSubjects = subjects
+        )
     }
 
     @Synchronized

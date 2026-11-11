@@ -382,7 +382,7 @@ fun MainScreen(
         // 3. Task Roulette & 25m Micro-Sprint Modal
         if (state.isTaskRouletteOpen) {
             TaskRouletteModal(
-                incompleteSlices = state.visibleDateSlices.filter { !it.slice.isCompleted },
+                incompleteSlices = state.rouletteCandidatePool,
                 sprintTimerState = state.sprintTimerState,
                 onDismiss = viewModel::closeTaskRoulette,
                 onLockedSlice = viewModel::onRouletteLockedSlice,

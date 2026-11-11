@@ -7,10 +7,12 @@ import com.chronos.hsc.data.store.AiRouletteRecommendation
 import com.chronos.hsc.data.store.BatchExamAiEvaluation
 import com.chronos.hsc.data.store.BatchExamRecord
 import com.chronos.hsc.data.store.BatchExamStore
+import com.chronos.hsc.data.store.BucketRotationTelemetry
 import com.chronos.hsc.data.store.CognitiveLoadCategory
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.ExamFormatMode
 import com.chronos.hsc.data.store.LastSpunRecord
+import com.chronos.hsc.data.store.WorkloadBucket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -67,6 +69,23 @@ object GeminiRouletteService {
                     CognitiveLoadCategory.SOFT_MEMORIZATION
                 }
             }
+        }
+    }
+
+    fun getSubjectName(slice: SliceWithParentChain): String {
+        val custom = CustomSubjectAndAiStore.getCustomSubjectForChain(slice.chain.chainId)
+        return custom?.customSubjectName ?: slice.chain.subject.fullName
+    }
+
+    fun classifySliceBucket(
+        slice: SliceWithParentChain,
+        todayEpochDay: Long = LocalDate.now().toEpochDay(),
+        upcomingBatchExams: List<BatchExamRecord> = BatchExamStore.getActiveUpcomingExams()
+    ): WorkloadBucket {
+        return when {
+            slice.slice.scheduledDateEpochDay < todayEpochDay || slice.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+            upcomingBatchExams.any { it.matchesSlice(slice) } -> WorkloadBucket.BATCH_EXAM
+            else -> WorkloadBucket.TODAY_NORMAL
         }
     }
 
@@ -266,7 +285,7 @@ object GeminiRouletteService {
     }
 
     /**
-     * Live Gemini 3.8 Flash Task Roulette with Coaching Batch Exam Priority Injection
+     * Live Gemini 3.8 Flash Task Roulette with 3-Bucket Balanced Pacing & Circadian Engine
      */
     suspend fun analyzeAndSpinLiveRoulette(
         candidateSlices: List<SliceWithParentChain>,
@@ -292,8 +311,23 @@ object GeminiRouletteService {
         val preferredModel = CustomSubjectAndAiStore.getSelectedModel().trim()
         val rejectedSlices = CustomSubjectAndAiStore.getRejectedSlicesSession()
         val lastSpun = CustomSubjectAndAiStore.getLastSpunRecord()
+        val todayEpoch = LocalDate.now().toEpochDay()
+        val bdTime = BangladeshTimeContext.now()
+        val telemetry = CustomSubjectAndAiStore.getBucketRotationTelemetry(todayEpoch)
+        val lastSpunSubject = lastSpun?.subjectName.orEmpty()
 
-        // 1. Behavioral Override Analysis
+        // 1. Partition Candidates into 3 Unified Workload Buckets
+        val comebackSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.COMEBACK_LEFTOVER }
+        val todayNormalSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
+        val batchExamSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.BATCH_EXAM }
+
+        // Cooldown & Batch Exam Cap Guards
+        val hasAlternativeSubject = candidateSlices.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
+        val isSubjectOnCooldown = lastSpunSubject.isNotBlank() && hasAlternativeSubject
+        val isBatchExamCapped = lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM ||
+            (telemetry.spinsBatchExam > 0 && (comebackSlices.isNotEmpty() || todayNormalSlices.isNotEmpty()) && telemetry.spinsBatchExam >= (telemetry.spinsTodayNormal + telemetry.spinsComeback))
+
+        // 2. Behavioral Override Analysis
         val mostRecentCompleted = allTodayCompletedSlices
             .filter { it.slice.isCompleted }
             .maxByOrNull { it.slice.completedAtTimestamp ?: 0L }
@@ -320,9 +354,8 @@ object GeminiRouletteService {
             }
         }
 
-        // 2. Build Upcoming Private Exams Array for Context Injection
+        // 3. Build Upcoming Private Exams Array
         val upcomingExamsArray = JSONArray()
-        val todayEpoch = LocalDate.now().toEpochDay()
         for (exam in upcomingBatchExams.take(6)) {
             val matchingCandidates = candidateSlices.filter { exam.matchesSlice(it) }
             upcomingExamsArray.put(
@@ -345,13 +378,14 @@ object GeminiRouletteService {
             )
         }
 
-        // 3. Build Candidate JSON for Gemini
+        // 4. Build Candidate JSON for Gemini
         val candidateArray = JSONArray()
         for (candidate in candidateSlices) {
             val cat = getCognitiveCategory(candidate)
-            val custom = CustomSubjectAndAiStore.getCustomSubjectForChain(candidate.chain.chainId)
-            val subName = custom?.customSubjectName ?: candidate.chain.subject.fullName
+            val subName = getSubjectName(candidate)
+            val bucket = classifySliceBucket(candidate, todayEpoch, upcomingBatchExams)
             val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(candidate) }
+            val onCooldown = isSubjectOnCooldown && subName.equals(lastSpunSubject, ignoreCase = true)
 
             candidateArray.put(
                 JSONObject().apply {
@@ -359,6 +393,9 @@ object GeminiRouletteService {
                     put("shortBadge", candidate.slice.shortBadge)
                     put("displayTitle", candidate.slice.displayTitle)
                     put("subject", subName)
+                    put("workloadBucket", bucket.name)
+                    put("workloadBucketEmoji", bucket.emoji)
+                    put("workloadBucketLabel", bucket.label)
                     put("cognitiveWeight", cat.name)
                     put("cognitiveLabel", cat.label)
                     put("phaseTag", candidate.slice.phaseTag)
@@ -366,6 +403,7 @@ object GeminiRouletteService {
                     put("effectiveLagDays", candidate.slice.effectiveLagDays)
                     put("isLagging", candidate.slice.isLagging)
                     put("isRejectedInSession", rejectedSlices.contains(candidate.slice.sliceId))
+                    put("isSubjectOnCooldown", onCooldown)
                     if (matchingExam != null) {
                         put("hasUpcomingExam", true)
                         put("examDaysLeft", matchingExam.daysLeft(todayEpoch))
@@ -378,12 +416,11 @@ object GeminiRouletteService {
             )
         }
 
-        // 4. Build Completed Today JSON
+        // 5. Build Completed Today JSON
         val completedArray = JSONArray()
         for (completed in allTodayCompletedSlices.take(8)) {
             val cat = getCognitiveCategory(completed)
-            val custom = CustomSubjectAndAiStore.getCustomSubjectForChain(completed.chain.chainId)
-            val subName = custom?.customSubjectName ?: completed.chain.subject.fullName
+            val subName = getSubjectName(completed)
             val timeStr = completed.slice.completedAtTimestamp?.let {
                 Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalTime().format(TIME_FORMATTER)
             } ?: "Today"
@@ -397,67 +434,92 @@ object GeminiRouletteService {
             )
         }
 
-        // 5. Construct Prompt with Strict Private Exam Priority
+        // 6. Construct Non-Biased 3-Bucket & Circadian System Prompt
         val prompt = """
-            You are the Chronos HSC AI Cognitive Roulette Engine — an elite neuro-productivity study engine designed for HSC exam candidates in Bangladesh.
-            Your job is to analyze the student's live study telemetry and select the single optimal task slice from candidateSlices to beat procrastination and balance brain fatigue.
+            You are the Chronos HSC AI Cognitive Roulette Engine — an elite neuro-productivity study strategist designed for HSC exam candidates in Bangladesh.
+            Your task is to analyze the student's live study telemetry and select the single optimal task slice from candidateSlices to beat procrastination, balance brain fatigue, and ensure steady progress across ALL subjects without tunnel vision.
 
-            CRITICAL COACHING EXAM RULE (HIGHEST PRIORITY):
-            The student attends private batches that take frequent MCQ/CQ exams. Check `upcomingPrivateExams` FIRST.
-            If any candidate slice on Today's board matches an upcoming Private/Batch Exam (especially within 1 to 5 days where `studyHoursLogged < aiEstimatedTotalStudyHours`), you MUST heavily prioritize selecting that exam's slice FIRST so the student never runs out of preparation time before exam day!
-            - SMART INTERLEAVING EXCEPTION: Only switch away from the urgent exam subject if the student JUST completed a heavy slice of that exact exam subject within the last 10 minutes and needs a 25-minute soft cognitive breather before returning to the exam chapter — and even then, explicitly remind them in `nextRecommendedAfterThis` to return immediately to their upcoming exam chapter!
-            - TAILOR THE ADVICE TO MCQ vs CQ: In `whyThisTaskNow`, explicitly mention their upcoming private exam's question count (e.g., 'Your Physics Private Exam has 50 MCQs + 2 CQs in 2 days and needs 4.5 more hours of prep — focus on calculator shortcuts during this 25m sprint!').
+            🕒 BANGLADESH TIME & CIRCADIAN PROFILE:
+            - Current Bangladesh Time: ${bdTime.currentBdTimeFormatted}
+            - Active Circadian Phase: ${bdTime.bdCircadianPhase}
+
+            📊 3 UNIFIED WORKLOAD BUCKETS IN TODAY'S CANDIDATE POOL:
+            1. 🔥 COMEBACK_LEFTOVER (${comebackSlices.size} tasks): Missed tasks from yesterday or past days (lag > 0). High risk of compounding procrastination!
+            2. 📅 TODAY_NORMAL (${todayNormalSlices.size} tasks): Today's standard scheduled HSC syllabus tasks. Essential for completing the core syllabus on time.
+            3. 📝 BATCH_EXAM (${batchExamSlices.size} tasks): Tasks matching upcoming private tuition / coaching batch exams.
+
+            📈 DAILY ROTATION TELEMETRY & ANTI-BIAS GUARDRAILS:
+            - Spun Today: Comeback=${telemetry.spinsComeback}, Today Normal=${telemetry.spinsTodayNormal}, Batch Exam=${telemetry.spinsBatchExam}
+            - Completed Today: Comeback=${telemetry.completedComeback}, Today Normal=${telemetry.completedTodayNormal}, Batch Exam=${telemetry.completedBatchExam}
+            - Recent Subjects Studied/Spun: ${if (telemetry.recentSubjects.isEmpty()) "None yet" else telemetry.recentSubjects.joinToString(" ➔ ")}
+            - Last Spun Subject: ${if (lastSpunSubject.isBlank()) "None" else lastSpunSubject} (Cooldown Active: $isSubjectOnCooldown)
+            - Batch Exam Cap Status: ${if (isBatchExamCapped) "⛔ CAPPED (Batch Exam spun/completed recently. Must prioritize Comeback or Today Normal!)" else "✅ AVAILABLE"}
+
+            CRITICAL ANTI-BIAS & BALANCED ROTATION RULES:
+            1. NO EXAM TUNNEL VISION: DO NOT repeatedly pick only Batch Exam tasks. Target workload distribution: ~35% Comeback Leftovers, ~40% Today Normal Tasks, ~25% Batch Exams.
+            2. BATCH EXAM CAP: If Batch Exam is capped ($isBatchExamCapped) and Comeback or Today Normal tasks exist, you MUST pick from Comeback or Today Normal!
+            3. SUBJECT COOLDOWN: If a candidate has `isSubjectOnCooldown: true`, DO NOT select it unless all candidates belong to the same subject. Avoid studying the exact same subject twice in a row.
+            4. CIRCADIAN HARMONY: Align with ${bdTime.bdCircadianPhase}. In Morning peak or Night wrap-up, rescuing Comeback Leftovers or finishing Today Normal has priority over repeated exam drills.
+            5. COGNITIVE ALTERNATION: Alternate HEAVY_ANALYTICAL calculation with SOFT_MEMORIZATION or BALANCED_CONCEPTUAL.
+            6. AVOID REJECTED: Do NOT select any slice with `isRejectedInSession == true` if other candidates exist.
+            7. ZOMBIE MODE (15%): If battery is 15% Zombie, prioritize SOFT_MEMORIZATION or light review.
 
             UPCOMING PRIVATE / COACHING BATCH EXAMS:
             $upcomingExamsArray
 
             CURRENT CONTEXT:
-            - Current Local Time: ${LocalTime.now().format(TIME_FORMATTER)}
             - Mental Battery Mode: $batteryModeLabel ($batteryPercent%)
-            - Major Exam Urgency: ${pinnedExam?.let { val daysLeft = (it.targetDateEpochDay - LocalDate.now().toEpochDay()).coerceAtLeast(0); "$daysLeft Days Left for ${it.examTitle}" } ?: "No major exam countdown"}
+            - Major Exam Urgency: ${pinnedExam?.let { val daysLeft = (it.targetDateEpochDay - todayEpoch).coerceAtLeast(0); "$daysLeft Days Left for ${it.examTitle}" } ?: "No major exam countdown"}
             - Behavioral Log Note: ${if (behavioralNoteStringBuilder.isNotEmpty()) behavioralNoteStringBuilder.toString() else "Starting a fresh study session."}
             - Rejected Slices This Session: ${rejectedSlices.joinToString(", ")}
 
             RECENTLY COMPLETED SLICES TODAY (Chronological):
             $completedArray
 
-            CANDIDATE INCOMPLETE SLICES FOR TODAY:
+            CANDIDATE INCOMPLETE SLICES:
             $candidateArray
-
-            GENERAL NEURO-PSYCHOLOGY RULES:
-            1. COGNITIVE ALTERNATION: When not constrained by an imminent exam deadline, alternate HEAVY_ANALYTICAL calculation with SOFT_MEMORIZATION or BALANCED_CONCEPTUAL.
-            2. USER OVERRIDE AWARENESS: If the student resisted a previously spun task and completed something else instead, acknowledge their focus transition.
-            3. AVOID REJECTED: Do NOT select any slice with isRejectedInSession == true if other valid candidate slices exist.
-            4. ZOMBIE MODE (15%): If battery is 15% Zombie, prioritize SOFT_MEMORIZATION or light review unless an exam is TOMORROW.
-            5. LAG PRIORITY: Prioritize slices with effectiveLagDays > 0 to clear study backlog.
 
             STRICT OUTPUT FORMAT:
             You must return a valid JSON object only with NO markdown fences, matching this schema:
             {
               "selectedSliceId": "exact sliceId from candidateSlices",
-              "cognitiveTransitionTag": "e.g. 🎯 EXAM RADAR LOCK (50 MCQ + 2 CQ) or SOFT ➔ HEAVY",
-              "behaviorAnalysisNote": "Brief 1-sentence observation of recent telemetry or exam urgency",
-              "whyThisTaskNow": "1-2 punchy sentences explaining why this exact task is optimal for their exam & brain right now",
-              "nextRecommendedAfterThis": "Brief teaser of what to tackle after this 25m sprint"
+              "cognitiveTransitionTag": "e.g. 🔥 COMEBACK HERO (Rescue Missed Task) or 📅 SYLLABUS MOMENTUM or 📝 EXAM RADAR",
+              "behaviorAnalysisNote": "Brief 1-sentence observation connecting Bangladesh circadian phase and telemetry balance",
+              "whyThisTaskNow": "1-2 punchy sentences explaining why this exact slice beats fatigue and keeps study balanced right now",
+              "nextRecommendedAfterThis": "Brief teaser of what contrasting bucket or subject to tackle after this 25m sprint"
             }
         """.trimIndent()
 
-        // 6. Query Gemini with model fallback chain
+        // 7. Query Gemini with model fallback chain
         val modelsToTry = listOf(
             preferredModel,
             CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_3_5_FLASH
+            CustomSubjectAndAiStore.MODEL_GEMINI_3_5_FLASH,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH
         ).distinct()
 
         for (model in modelsToTry) {
             val result = queryGeminiModel(model, apiKey, prompt, candidateSlices)
             if (result != null) {
+                val winner = candidateSlices.find { it.slice.sliceId == result.selectedSliceId }
+                if (winner != null) {
+                    val winnerBucket = classifySliceBucket(winner, todayEpoch, upcomingBatchExams)
+                    val winnerSubName = getSubjectName(winner)
+                    CustomSubjectAndAiStore.recordSpin(
+                        sliceId = winner.slice.sliceId,
+                        title = winner.slice.displayTitle,
+                        subjectName = winnerSubName,
+                        category = getCognitiveCategory(winner),
+                        bucket = winnerBucket,
+                        todayEpochDay = todayEpoch
+                    )
+                }
                 CustomSubjectAndAiStore.saveLastRecommendation(result)
                 return@withContext result
             }
         }
 
-        // 7. Local Heuristic Fallback with Exam-First Priority
+        // 8. Local Heuristic Fallback with Balanced 3-Bucket & Circadian Logic
         val fallback = runSmartCognitiveAlternatingHeuristic(
             candidateSlices = candidateSlices,
             allTodayCompletedSlices = allTodayCompletedSlices,
@@ -575,40 +637,39 @@ object GeminiRouletteService {
         val nonRejected = candidateSlices.filter { !rejectedSlices.contains(it.slice.sliceId) }
         val pool = if (nonRejected.isNotEmpty()) nonRejected else candidateSlices
 
+        val bdTime = BangladeshTimeContext.now()
+        val todayEpoch = LocalDate.now().toEpochDay()
+        val telemetry = CustomSubjectAndAiStore.getBucketRotationTelemetry(todayEpoch)
+        val lastSpun = CustomSubjectAndAiStore.getLastSpunRecord()
+        val lastSpunSubject = lastSpun?.subjectName.orEmpty()
+
         val mostRecentCompleted = allTodayCompletedSlices
             .filter { it.slice.isCompleted }
             .maxByOrNull { it.slice.completedAtTimestamp ?: 0L }
-
         val lastCat = mostRecentCompleted?.let { getCognitiveCategory(it) }
 
-        // Check if any candidate slice matches an urgent upcoming batch exam (within 5 days)
-        val todayEpoch = LocalDate.now().toEpochDay()
-        val urgentExams = upcomingBatchExams
-            .filter { it.daysLeft(todayEpoch) <= 5L && it.remainingStudyHours > 0f }
-            .sortedBy { it.daysLeft(todayEpoch) }
+        // Partition candidate pool into 3 distinct buckets
+        val cList = pool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.COMEBACK_LEFTOVER }
+        val tList = pool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
+        val bList = pool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.BATCH_EXAM }
 
-        val examMatchingCandidate = urgentExams.firstNotNullOfOrNull { exam ->
-            pool.firstOrNull { exam.matchesSlice(it) }?.let { slice -> Pair(exam, slice) }
+        // Anti-Bias Guard 1: Subject Cooldown (don't repeat the exact same subject if other subjects exist)
+        val hasDiffSubject = pool.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
+        fun applyCooldown(list: List<SliceWithParentChain>): List<SliceWithParentChain> {
+            if (!hasDiffSubject || lastSpunSubject.isBlank()) return list
+            val filtered = list.filter { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
+            return if (filtered.isNotEmpty()) filtered else list
         }
 
-        if (examMatchingCandidate != null && batteryPercent > 15) {
-            val (exam, slice) = examMatchingCandidate
-            val days = exam.daysLeft(todayEpoch)
-            val daysStr = if (days == 0L) "TODAY" else "in ${days}d"
-            val custom = CustomSubjectAndAiStore.getCustomSubjectForChain(slice.chain.chainId)
-            val subName = custom?.customSubjectName ?: slice.chain.subject.fullName
+        val filteredC = applyCooldown(cList)
+        val filteredT = applyCooldown(tList)
+        val filteredB = applyCooldown(bList)
 
-            return AiRouletteRecommendation(
-                selectedSliceId = slice.slice.sliceId,
-                cognitiveTransitionTag = "🎯 EXAM RADAR LOCK (${exam.formatSummary})",
-                behaviorAnalysisNote = "Imminent ${exam.batchOrCoachingName} exam $daysStr. Required prep: ~${String.format(Locale.US, "%.1f", exam.remainingStudyHours)}h left.",
-                whyThisTaskNow = "Selected $subName (${exam.chapterNumbersAndTitles}) — urgent exam $daysStr requires high-focus preparation for ${exam.formatSummary}!",
-                nextRecommendedAfterThis = "After this 25m sprint, proceed with targeted formula or stem drills.",
-                isOfflineFallback = true
-            )
-        }
+        // Anti-Bias Guard 2: Batch Exam Cap
+        val isBatchExamCapped = lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM ||
+            (telemetry.spinsBatchExam > 0 && (filteredC.isNotEmpty() || filteredT.isNotEmpty()) && telemetry.spinsBatchExam >= (telemetry.spinsTodayNormal + telemetry.spinsComeback))
 
-        // Standard Cognitive Alternation
+        // Cognitive load alternation target
         val targetCategory = when {
             batteryPercent <= 20 -> CognitiveLoadCategory.SOFT_MEMORIZATION
             lastCat == CognitiveLoadCategory.HEAVY_ANALYTICAL -> CognitiveLoadCategory.SOFT_MEMORIZATION
@@ -616,32 +677,83 @@ object GeminiRouletteService {
             else -> CognitiveLoadCategory.BALANCED_CONCEPTUAL
         }
 
-        // Rank candidates: matching targetCategory first, then lagging slices, then highest XP
-        val bestCandidate = pool.filter { getCognitiveCategory(it) == targetCategory }
-            .maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
-            ?: pool.maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
-            ?: pool.first()
+        val hour = bdTime.zonedDateTime.hour
+        val isMorningOrNight = (hour in 6..11) || (hour in 20..23)
 
-        val bestCat = getCognitiveCategory(bestCandidate)
-        val fromLabel = lastCat?.name ?: "START"
-        val toLabel = bestCat.name
-        val custom = CustomSubjectAndAiStore.getCustomSubjectForChain(bestCandidate.chain.chainId)
-        val subName = custom?.customSubjectName ?: bestCandidate.chain.subject.fullName
+        val selectedSlice: SliceWithParentChain
+        val transitionTag: String
+        val whyText: String
+        val nextText: String
 
-        val behaviorText = if (overrideNote.isNotBlank()) {
-            overrideNote.trim()
-        } else if (mostRecentCompleted != null) {
-            "Noticed you finished [${mostRecentCompleted.slice.displayTitle}]. Alternating cognitive channels."
+        if (filteredC.isNotEmpty() && (isMorningOrNight || filteredT.isEmpty() || telemetry.spinsComeback <= telemetry.spinsTodayNormal)) {
+            // Pick COMEBACK_LEFTOVER: prioritize highest lag or matching cognitive category
+            selectedSlice = filteredC.filter { getCognitiveCategory(it) == targetCategory }
+                .maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
+                ?: filteredC.maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
+                ?: filteredC.first()
+            val subName = getSubjectName(selectedSlice)
+            transitionTag = "🔥 COMEBACK HERO | Rescue Missed Slice"
+            whyText = "Rescuing overdue slice for $subName (Lag: ${selectedSlice.slice.effectiveLagDays}d) to restore your streak and prevent compounding backlog."
+            nextText = "After this 25m sprint, proceed to today's core syllabus tasks."
+        } else if (filteredT.isNotEmpty() && (isBatchExamCapped || filteredB.isEmpty() || telemetry.spinsTodayNormal <= telemetry.spinsBatchExam)) {
+            // Pick TODAY_NORMAL: prioritize matching target category, then xpMultiplier
+            selectedSlice = filteredT.filter { getCognitiveCategory(it) == targetCategory }
+                .maxByOrNull { it.slice.xpMultiplier }
+                ?: filteredT.first()
+            val subName = getSubjectName(selectedSlice)
+            val cat = getCognitiveCategory(selectedSlice)
+            transitionTag = "📅 SYLLABUS MOMENTUM | Regular HSC Focus"
+            whyText = "Advancing core syllabus for $subName (${cat.label}) during peak circadian window to maintain steady daily pace."
+            nextText = "Next, rotate to an analytical problem-solving sprint or private exam drill."
+        } else if (filteredB.isNotEmpty() && !isBatchExamCapped) {
+            // Pick BATCH_EXAM: prioritize closest exam deadline
+            val urgentExams = upcomingBatchExams.filter { it.daysLeft(todayEpoch) <= 7L }.sortedBy { it.daysLeft(todayEpoch) }
+            selectedSlice = urgentExams.firstNotNullOfOrNull { exam ->
+                filteredB.firstOrNull { exam.matchesSlice(it) }
+            } ?: filteredB.first()
+            val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(selectedSlice) }
+            val subName = getSubjectName(selectedSlice)
+            val days = matchingExam?.daysLeft(todayEpoch) ?: 0L
+            val daysStr = if (days == 0L) "TODAY" else "in ${days}d"
+            transitionTag = "📝 BATCH EXAM RADAR (${matchingExam?.formatSummary ?: "Target Drill"})"
+            whyText = "Targeted drill for $subName: upcoming ${matchingExam?.batchOrCoachingName ?: "coaching exam"} $daysStr (${matchingExam?.formatSummary ?: "MCQ/CQ"})."
+            nextText = "After this sprint, transition to a regular syllabus slice to prevent cognitive fatigue."
         } else {
-            "Starting fresh session. Selecting optimal cognitive load for $batteryPercent% battery."
+            // Fallback from general pool
+            selectedSlice = pool.filter { getCognitiveCategory(it) == targetCategory }
+                .maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
+                ?: pool.first()
+            val subName = getSubjectName(selectedSlice)
+            transitionTag = "⚡ COGNITIVE REBOUND | Brain Channel Switch"
+            whyText = "Targeted $subName to balance cognitive load and maintain study rhythm."
+            nextText = "Next, we will rotate to a contrasting conceptual block."
+        }
+
+        val winnerBucket = classifySliceBucket(selectedSlice, todayEpoch, upcomingBatchExams)
+        val winnerSubName = getSubjectName(selectedSlice)
+        val winnerCat = getCognitiveCategory(selectedSlice)
+
+        CustomSubjectAndAiStore.recordSpin(
+            sliceId = selectedSlice.slice.sliceId,
+            title = selectedSlice.slice.displayTitle,
+            subjectName = winnerSubName,
+            category = winnerCat,
+            bucket = winnerBucket,
+            todayEpochDay = todayEpoch
+        )
+
+        val behaviorNote = if (overrideNote.isNotBlank()) {
+            overrideNote.trim()
+        } else {
+            "Bangladesh Circadian Engine (${bdTime.currentBdTimeFormatted}): Telemetry balanced across Comeback, Today Normal, and Exam buckets."
         }
 
         return AiRouletteRecommendation(
-            selectedSliceId = bestCandidate.slice.sliceId,
-            cognitiveTransitionTag = "⚡ $fromLabel ➔ $toLabel | Brain Channel Switch",
-            behaviorAnalysisNote = behaviorText,
-            whyThisTaskNow = "Targeted $subName (${bestCat.label}) to keep your neural momentum high while letting fatigued circuits recover.",
-            nextRecommendedAfterThis = "After this 25m sprint, we will rotate to a contrasting conceptual block.",
+            selectedSliceId = selectedSlice.slice.sliceId,
+            cognitiveTransitionTag = transitionTag,
+            behaviorAnalysisNote = behaviorNote,
+            whyThisTaskNow = whyText,
+            nextRecommendedAfterThis = nextText,
             isOfflineFallback = true
         )
     }

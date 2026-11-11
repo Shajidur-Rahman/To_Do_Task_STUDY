@@ -41,8 +41,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.chronos.hsc.data.service.GeminiRouletteService
 import com.chronos.hsc.data.store.AiRouletteRecommendation
-import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.BatchExamStore
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.WorkloadBucket
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import androidx.compose.runtime.Composable
@@ -143,11 +145,7 @@ fun TaskRouletteModal(
                 isAiAnalyzing = false
 
                 val winner = incompleteSlices.find { it.slice.sliceId == rec?.selectedSliceId }
-                    ?: run {
-                        val urgentExams = BatchExamStore.getActiveUpcomingExams().filter { it.daysLeft() <= 5L && it.remainingStudyHours > 0f }
-                        incompleteSlices.firstOrNull { slice -> urgentExams.any { it.matchesSlice(slice) } }
-                            ?: incompleteSlices.random()
-                    }
+                    ?: incompleteSlices.random()
                 val targetWinnerIdx = incompleteSlices.indexOf(winner).coerceAtLeast(0)
 
                 val currentMod = step % poolSize
@@ -270,6 +268,19 @@ fun TaskRouletteModal(
                                     candidate.chain.subject.brandColor()
                                 }
 
+                                val todayEpoch = remember { LocalDate.now().toEpochDay() }
+                                val activeExams = remember { BatchExamStore.getActiveUpcomingExams() }
+                                val bucket = when {
+                                    candidate.slice.scheduledDateEpochDay < todayEpoch || candidate.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+                                    activeExams.any { it.matchesSlice(candidate) } -> WorkloadBucket.BATCH_EXAM
+                                    else -> WorkloadBucket.TODAY_NORMAL
+                                }
+                                val (badgeText, badgeBg, badgeTextColor) = when (bucket) {
+                                    WorkloadBucket.COMEBACK_LEFTOVER -> Triple("🔥 COMEBACK", Color(0x33FF5252), Color(0xFFFF5252))
+                                    WorkloadBucket.BATCH_EXAM -> Triple("📝 EXAM", Color(0x33E040FB), Color(0xFFE040FB))
+                                    WorkloadBucket.TODAY_NORMAL -> Triple("📅 TODAY", Color(0x3300E5FF), Color(0xFF00E5FF))
+                                }
+
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (isHighlighted) sColor.copy(alpha = 0.24f) else ObsidianSurfaceElevated,
@@ -288,6 +299,19 @@ fun TaskRouletteModal(
                                             verticalAlignment = Alignment.CenterVertically,
                                             modifier = Modifier.weight(1f)
                                         ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = badgeBg,
+                                                modifier = Modifier.padding(end = 6.dp)
+                                            ) {
+                                                Text(
+                                                    text = badgeText,
+                                                    fontSize = 8.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = badgeTextColor,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                )
+                                            }
                                             Text(
                                                 text = candidate.slice.shortBadge,
                                                 fontFamily = FontFamily.Monospace,
@@ -295,7 +319,7 @@ fun TaskRouletteModal(
                                                 color = sColor,
                                                 fontSize = 11.sp
                                             )
-                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
                                             Text(
                                                 text = candidate.slice.displayTitle,
                                                 fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.Normal,
