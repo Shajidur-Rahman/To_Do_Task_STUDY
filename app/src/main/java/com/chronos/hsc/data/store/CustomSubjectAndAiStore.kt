@@ -98,6 +98,11 @@ data class AiRouletteRecommendation(
     val behaviorAnalysisNote: String,
     val whyThisTaskNow: String,
     val nextRecommendedAfterThis: String,
+    val coachStatusLevel: String = "PACE_ALERT", // "CRITICAL_CAUTION", "PACE_ALERT", "HIGH_MOMENTUM"
+    val coachHeadline: String = "",
+    val coachHonestComment: String = "",
+    val lagConsequenceWarning: String = "",
+    val stepByStepSprintPlan: String = "",
     val isOfflineFallback: Boolean = false
 )
 
@@ -519,6 +524,11 @@ object CustomSubjectAndAiStore {
             put("behaviorAnalysisNote", rec.behaviorAnalysisNote)
             put("whyThisTaskNow", rec.whyThisTaskNow)
             put("nextRecommendedAfterThis", rec.nextRecommendedAfterThis)
+            put("coachStatusLevel", rec.coachStatusLevel)
+            put("coachHeadline", rec.coachHeadline)
+            put("coachHonestComment", rec.coachHonestComment)
+            put("lagConsequenceWarning", rec.lagConsequenceWarning)
+            put("stepByStepSprintPlan", rec.stepByStepSprintPlan)
             put("isOfflineFallback", rec.isOfflineFallback)
         }
         getPrefs().edit().putString(KEY_LAST_RECOMMENDATION, obj.toString()).apply()
@@ -535,6 +545,11 @@ object CustomSubjectAndAiStore {
                 behaviorAnalysisNote = obj.getString("behaviorAnalysisNote"),
                 whyThisTaskNow = obj.getString("whyThisTaskNow"),
                 nextRecommendedAfterThis = obj.getString("nextRecommendedAfterThis"),
+                coachStatusLevel = obj.optString("coachStatusLevel", "PACE_ALERT"),
+                coachHeadline = obj.optString("coachHeadline", ""),
+                coachHonestComment = obj.optString("coachHonestComment", ""),
+                lagConsequenceWarning = obj.optString("lagConsequenceWarning", ""),
+                stepByStepSprintPlan = obj.optString("stepByStepSprintPlan", ""),
                 isOfflineFallback = obj.optBoolean("isOfflineFallback", false)
             )
         } catch (_: Exception) {

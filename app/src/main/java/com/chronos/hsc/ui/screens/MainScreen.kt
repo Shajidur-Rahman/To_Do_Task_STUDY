@@ -137,6 +137,7 @@ import com.chronos.hsc.ui.theme.TerrariumSurface
 import com.chronos.hsc.ui.theme.TerrariumSurfaceElevated
 import com.chronos.hsc.ui.theme.ThemePreferences
 import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.theme.harmonizeForBlackUi
 import com.chronos.hsc.ui.viewmodel.StudyUiEvent
 import com.chronos.hsc.ui.viewmodel.StudyUiState
 import com.chronos.hsc.ui.viewmodel.StudyViewModel
@@ -236,7 +237,7 @@ fun MainScreen(
                         ExtendedFloatingActionButton(
                             onClick = { viewModel.openAddTopicModal() },
                             containerColor = accentColor,
-                            contentColor = if (isNature) Color(0xFF00210E) else Color(0xFF001F24),
+                            contentColor = if (isNature) Color(0xFF00210E) else Color(0xFF09090B),
                             icon = {
                                 Icon(
                                     imageVector = Icons.Default.Add,
@@ -379,10 +380,15 @@ fun MainScreen(
             )
         }
 
-        // 3. Task Roulette & 25m Micro-Sprint Modal
+        // 3. Full-Window AI Task Roulette, Coach & 25m Micro-Sprint Modal
         if (state.isTaskRouletteOpen) {
             TaskRouletteModal(
                 incompleteSlices = state.rouletteCandidatePool,
+                allTodayCompletedSlices = state.visibleDateSlices.filter { it.slice.isCompleted },
+                batteryMode = state.batteryMode,
+                pinnedExam = state.pinnedExam,
+                userStreakDays = state.userStats.streakDays,
+                userLevel = state.userStats.currentLevel,
                 sprintTimerState = state.sprintTimerState,
                 onDismiss = viewModel::closeTaskRoulette,
                 onLockedSlice = viewModel::onRouletteLockedSlice,
@@ -464,6 +470,7 @@ private fun ExamCountdownFloatingButton(
     activeExam: ExamCountdownEntity?,
     onClick: () -> Unit
 ) {
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val infiniteTransition = rememberInfiniteTransition(label = "examUrgencyPulse")
     val crimsonPulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.55f,
@@ -475,15 +482,17 @@ private fun ExamCountdownFloatingButton(
         label = "crimsonPulse"
     )
 
+    val pillBg = if (isNature) Color(0xFF121824) else ObsidianSurfaceElevated
+
     if (activeExam == null) {
         // Unconfigured State: "⏳ Add Timer Day"
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF121824),
+            color = pillBg,
             border = BorderStroke(
-                width = 1.5.dp,
+                width = if (isNature) 1.5.dp else 1.dp,
                 brush = Brush.horizontalGradient(
-                    colors = listOf(CyberMagenta, CyberCyan)
+                    colors = if (isNature) listOf(CyberMagenta, CyberCyan) else listOf(Color(0xFF52525B), Color(0xFFA1A1AA))
                 )
             ),
             shadowElevation = 6.dp,
@@ -519,13 +528,9 @@ private fun ExamCountdownFloatingButton(
             else -> "✅ Completed"
         }
 
-        // Dynamic Urgency Border & Glow Color:
-        // > 60 days: Neon Cyan (#00E5FF)
-        // 15 to 60 days: Electric Amber (#FFAB00)
-        // < 15 days: Pulsing Crimson Neon (#FF1744)
         val borderColor = when {
-            daysRemaining > 60L -> CyberCyan
-            daysRemaining in 15L..60L -> CyberAmber
+            daysRemaining > 60L -> if (isNature) CyberCyan else Color(0xFF52525B)
+            daysRemaining in 15L..60L -> if (isNature) CyberAmber else Color(0xFF71717A)
             else -> CyberCrimson.copy(alpha = crimsonPulseAlpha)
         }
         val textColor = when {
@@ -536,8 +541,8 @@ private fun ExamCountdownFloatingButton(
 
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF121824),
-            border = BorderStroke(width = 1.5.dp, color = borderColor),
+            color = pillBg,
+            border = BorderStroke(width = if (isNature) 1.5.dp else 1.dp, color = borderColor),
             shadowElevation = 8.dp,
             modifier = Modifier.clickable { onClick() }
         ) {
@@ -1474,6 +1479,7 @@ private fun DominoConflictBanner(
     overdueChainsCount: Int,
     onExecuteDominoShift: () -> Unit
 ) {
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val infiniteTransition = rememberInfiniteTransition(label = "dominoAlertPulse")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.45f,
@@ -1489,8 +1495,8 @@ private fun DominoConflictBanner(
 
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF231020),
-        border = BorderStroke(1.5.dp, CyberCrimson.copy(alpha = pulseAlpha)),
+        color = if (isNature) Color(0xFF231020) else Color(0xFF141113),
+        border = BorderStroke(1.2.dp, CyberCrimson.copy(alpha = pulseAlpha)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -1526,7 +1532,7 @@ private fun DominoConflictBanner(
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFFEA80FC)
+                        color = if (isNature) Color(0xFFEA80FC) else Color(0xFFD4D4D8)
                     )
                 }
             }
@@ -1545,7 +1551,7 @@ private fun DominoConflictBanner(
                 onClick = onExecuteDominoShift,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = CyberCrimson,
-                    contentColor = Color.White
+                    contentColor = if (isNature) Color.White else Color(0xFF180408)
                 ),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -1598,49 +1604,65 @@ private fun DateScrubberAndRouletteSection(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp)) {
-        // Task Roulette Button (only shown in full non-compact mode; in compact mode it lives inside Tools drawer)
-        if (!isCompact) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isNature) NatureSproutLime.copy(alpha = 0.16f) else CyberMagenta.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, if (isNature) NatureSproutLime else CyberMagenta),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpenRoulette() }
+        // Always-Visible AI Subject Spin & Coach Window Launcher
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = if (isNature) NatureSproutLime.copy(alpha = 0.16f) else Color(0xFF14141A),
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (isNature) NatureSproutLime else Color(0xFF3F3F46)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenRoulette() }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = if (isCompact) 8.dp else 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = Icons.Default.Casino,
-                            contentDescription = "Task Roulette",
-                            tint = if (isNature) NatureSproutLime else CyberMagenta,
-                            modifier = Modifier.size(20.dp)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        imageVector = Icons.Default.Casino,
+                        contentDescription = "AI Subject Spin",
+                        tint = if (isNature) NatureSproutLime else CyberAmber,
+                        modifier = Modifier.size(if (isCompact) 18.dp else 20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "🎲 AI Subject Spin & Study Coach",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = if (isCompact) 12.sp else 13.sp,
+                            color = TextPrimary
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "🎲 Spin Task Roulette (Beat Decision Paralysis)",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = "Locks onto a random slice + 25m Micro-Sprint with 2x XP Multiplier",
-                                fontSize = 11.sp,
-                                color = TextSecondary
-                            )
-                        }
+                        Text(
+                            text = "Opens full AI window • Picks next chapter + warns if you're lagging behind",
+                            fontSize = 10.sp,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(if (isNature) NatureSproutLime.copy(alpha = 0.2f) else Color(0xFF27272A))
+                        .border(
+                            1.dp,
+                            if (isNature) NatureSproutLime else Color(0xFF52525B),
+                            RoundedCornerShape(7.dp)
+                        )
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                ) {
                     Text(
-                        text = "SPIN >>",
+                        text = "AI SPIN >>",
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 11.sp,
-                        color = if (isNature) NatureSproutLime else CyberMagenta
+                        fontSize = 10.sp,
+                        color = if (isNature) NatureSproutLime else Color.White
                     )
                 }
             }
@@ -1789,6 +1811,7 @@ private fun DateScrubberAndRouletteSection(
 private fun ActiveBossesMiniCarousel(
     activeChains: List<TopicChainWithSlices>
 ) {
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     Column {
         Text(
             text = "⚔️ ACTIVE SYLLABUS BOSSES (${activeChains.size})",
@@ -1808,16 +1831,16 @@ private fun ActiveBossesMiniCarousel(
                 val chain = chainWithSlices.chain
                 val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
                 val sColor = if (customLink != null) {
-                    Color(customLink.colorHex)
+                    Color(customLink.colorHex).harmonizeForBlackUi()
                 } else {
                     chain.subject.brandColor()
                 }
-                val subjectLabel = if (customLink != null) "${customLink.name} Ch ${chain.chapterNumber}" else "${chain.subject.fullName} Ch ${chain.chapterNumber}"
+                val subjectName = customLink?.name ?: chain.subject.fullName
                 Surface(
                     shape = RoundedCornerShape(14.dp),
-                    color = ObsidianSurface,
-                    border = BorderStroke(1.dp, sColor.copy(alpha = 0.5f)),
-                    modifier = Modifier.width(235.dp)
+                    color = if (isNature) TerrariumSurface else ObsidianSurface,
+                    border = BorderStroke(1.dp, if (isNature) sColor.copy(alpha = 0.5f) else Color(0xFF27272A)),
+                    modifier = Modifier.width(245.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(
@@ -1826,19 +1849,29 @@ private fun ActiveBossesMiniCarousel(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = subjectLabel,
+                                text = subjectName.uppercase(),
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
                                 color = sColor
                             )
-                            Text(
-                                text = "${chainWithSlices.completedCoreSlicesCount}/${chain.totalDays} Days",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                color = TextSecondary
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(sColor.copy(alpha = 0.16f))
+                                    .border(1.dp, sColor.copy(alpha = 0.55f), RoundedCornerShape(5.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "CH ${chain.chapterNumber} • অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 9.5.sp,
+                                    color = if (isNature) sColor else Color.White
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
                         val banglaBossChapter = chain.chapterName.trim().ifEmpty {
                             HscSyllabusCatalog.getChapterNameBangla(
                                 chain.subject,
@@ -1847,9 +1880,9 @@ private fun ActiveBossesMiniCarousel(
                             )
                         }
                         Text(
-                            text = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}: $banglaBossChapter",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
+                            text = banglaBossChapter,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp,
                             color = TextPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -1978,6 +2011,7 @@ private fun ActiveChainsTab(
     onRequestDeleteChain: (TopicChainWithSlices) -> Unit,
     onJumpToSliceDate: (Long) -> Unit
 ) {
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val dateFormatter = remember { DateTimeFormatter.ofPattern("MMM d") }
 
     LazyColumn(
@@ -2032,7 +2066,7 @@ private fun ActiveChainsTab(
                             onClick = onOpenAddTopic,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = CyberCyan,
-                                contentColor = Color(0xFF001F24)
+                                contentColor = Color(0xFF09090B)
                             ),
                             shape = RoundedCornerShape(10.dp)
                         ) {
@@ -2059,7 +2093,7 @@ private fun ActiveChainsTab(
                 val chain = item.chain
                 val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
                 val subjectColor = if (customLink != null) {
-                    Color(customLink.colorHex)
+                    Color(customLink.colorHex).harmonizeForBlackUi()
                 } else {
                     chain.subject.brandColor()
                 }
@@ -2070,7 +2104,6 @@ private fun ActiveChainsTab(
                         chain.chapterNumber
                     )
                 }
-                val chapterHeading = "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}: $resolvedBanglaName"
                 val subjectHeaderLabel = if (customLink != null) {
                     if (customLink.hasSecondPaper && chain.paper != HscPaper.SINGLE) "${customLink.name} • ${chain.paper.fullName}" else customLink.name
                 } else {
@@ -2079,8 +2112,8 @@ private fun ActiveChainsTab(
 
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = ObsidianSurface,
-                    border = BorderStroke(1.dp, subjectColor.copy(alpha = 0.6f)),
+                    color = if (isNature) TerrariumSurface else ObsidianSurface,
+                    border = BorderStroke(1.dp, if (isNature) subjectColor.copy(alpha = 0.6f) else Color(0xFF27272A)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -2106,16 +2139,25 @@ private fun ActiveChainsTab(
                                         )
                                     }
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "${chain.totalDays}-Day Chain",
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                        color = TextSecondary
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isNature) subjectColor.copy(alpha = 0.14f) else Color(0xFF27272A))
+                                            .border(1.dp, subjectColor.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
+                                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "CHAPTER ${chain.chapterNumber} • অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)}",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 10.sp,
+                                            color = if (isNature) subjectColor else Color.White
+                                        )
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = chapterHeading,
+                                    text = resolvedBanglaName,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 17.sp,
                                     color = TextPrimary

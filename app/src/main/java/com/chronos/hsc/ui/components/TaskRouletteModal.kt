@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -20,9 +21,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -45,18 +47,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.TextStyle
-import com.chronos.hsc.data.service.GeminiRouletteService
-import com.chronos.hsc.data.store.AiRouletteRecommendation
-import com.chronos.hsc.data.store.BatchExamStore
-import com.chronos.hsc.data.store.CustomSubjectAndAiStore
-import com.chronos.hsc.data.store.WorkloadBucket
-import java.time.LocalDate
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -69,30 +59,59 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.chronos.hsc.data.local.EnergyLevel
+import com.chronos.hsc.data.local.ExamCountdownEntity
+import com.chronos.hsc.data.local.HscPaper
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.local.SliceWithParentChain
+import com.chronos.hsc.data.service.GeminiRouletteService
+import com.chronos.hsc.data.store.AiRouletteRecommendation
+import com.chronos.hsc.data.store.BatchExamStore
+import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.store.WorkloadBucket
+import com.chronos.hsc.ui.theme.AppThemeMode
 import com.chronos.hsc.ui.theme.CyberAmber
 import com.chronos.hsc.ui.theme.CyberCrimson
 import com.chronos.hsc.ui.theme.CyberCyan
 import com.chronos.hsc.ui.theme.CyberEmerald
 import com.chronos.hsc.ui.theme.CyberMagenta
+import com.chronos.hsc.ui.theme.LocalAppThemeMode
+import com.chronos.hsc.ui.theme.NatureAutumnOrange
+import com.chronos.hsc.ui.theme.NatureFireflyGold
+import com.chronos.hsc.ui.theme.NatureLagRust
+import com.chronos.hsc.ui.theme.NatureLeafGreen
+import com.chronos.hsc.ui.theme.NatureSproutLime
 import com.chronos.hsc.ui.theme.ObsidianBackground
 import com.chronos.hsc.ui.theme.ObsidianBorder
 import com.chronos.hsc.ui.theme.ObsidianSurface
 import com.chronos.hsc.ui.theme.ObsidianSurfaceElevated
+import com.chronos.hsc.ui.theme.TerrariumBackground
+import com.chronos.hsc.ui.theme.TerrariumBorder
+import com.chronos.hsc.ui.theme.TerrariumSurface
+import com.chronos.hsc.ui.theme.TerrariumSurfaceElevated
 import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.TextSecondary
 import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.theme.harmonizeForBlackUi
 import com.chronos.hsc.ui.viewmodel.SprintTimerState
+import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 @Composable
 fun TaskRouletteModal(
@@ -103,10 +122,22 @@ fun TaskRouletteModal(
     onAcceptAndStartSprint: () -> Unit,
     onTogglePauseSprint: () -> Unit = {},
     onCompleteSprintSlice: (String) -> Unit,
-    onStopSprint: () -> Unit
+    onStopSprint: () -> Unit,
+    allTodayCompletedSlices: List<SliceWithParentChain> = emptyList(),
+    batteryMode: EnergyLevel = EnergyLevel.HIGH_FOCUS,
+    pinnedExam: ExamCountdownEntity? = null,
+    userStreakDays: Int = 0,
+    userLevel: Int = 1
 ) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
+    val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
+
+    val windowBg = if (isNature) TerrariumBackground else ObsidianBackground
+    val cardSurface = if (isNature) TerrariumSurface else ObsidianSurface
+    val elevatedSurface = if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
+    val borderCol = if (isNature) TerrariumBorder else ObsidianBorder
+    val primaryAccent = if (isNature) NatureLeafGreen else Color(0xFFFAFAFA)
 
     var isSpinning by remember { mutableStateOf(false) }
     var isAiAnalyzing by remember { mutableStateOf(false) }
@@ -117,7 +148,14 @@ fun TaskRouletteModal(
     var lockedItem by remember(sprintTimerState?.targetSliceId, incompleteSlices) {
         mutableStateOf(
             incompleteSlices.firstOrNull { it.slice.sliceId == sprintTimerState?.targetSliceId }
+                ?: incompleteSlices.firstOrNull { it.slice.sliceId == aiRecommendation?.selectedSliceId }
         )
+    }
+
+    val todayEpoch = remember { LocalDate.now().toEpochDay() }
+    val activeExams = remember { BatchExamStore.getActiveUpcomingExams() }
+    val comebackCount = remember(incompleteSlices, todayEpoch) {
+        incompleteSlices.count { it.slice.scheduledDateEpochDay < todayEpoch || it.slice.effectiveLagDays > 0 }
     }
 
     val spinRoulette: () -> Unit = {
@@ -126,10 +164,21 @@ fun TaskRouletteModal(
             isAiAnalyzing = true
             lockedItem = null
             scope.launch {
+                val batteryPct = when (batteryMode) {
+                    EnergyLevel.HIGH_FOCUS -> 100
+                    EnergyLevel.MEDIUM -> 50
+                    EnergyLevel.ZOMBIE_MODE -> 15
+                }
                 val aiDeferred = async(Dispatchers.IO) {
                     GeminiRouletteService.analyzeAndSpinLiveRoulette(
                         candidateSlices = incompleteSlices,
-                        upcomingBatchExams = BatchExamStore.getActiveUpcomingExams()
+                        allTodayCompletedSlices = allTodayCompletedSlices,
+                        batteryPercent = batteryPct,
+                        batteryModeLabel = batteryMode.name,
+                        pinnedExam = pinnedExam,
+                        upcomingBatchExams = BatchExamStore.getActiveUpcomingExams(),
+                        userStreakDays = userStreakDays,
+                        userLevel = userLevel
                     )
                 }
 
@@ -184,199 +233,190 @@ fun TaskRouletteModal(
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    // Full-Screen Dedicated AI Subject & Task Roulette Window
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = ObsidianSurface,
-            border = BorderStroke(1.5.dp, CyberMagenta),
-            modifier = Modifier.fillMaxWidth()
+            color = windowBg,
+            modifier = Modifier.fillMaxSize()
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // 1. Top Window Header Bar
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardSurface,
+                    border = BorderStroke(1.dp, borderCol),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Casino,
-                            contentDescription = null,
-                            tint = CyberMagenta
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "TASK ROULETTE ENGINE",
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = CyberMagenta
-                            )
-                            Text(
-                                text = "Beat decision paralysis • 2x XP Micro-Sprint",
-                                fontSize = 11.sp,
-                                color = TextSecondary
-                            )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = elevatedSurface,
+                                border = BorderStroke(1.dp, borderCol),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Casino,
+                                        contentDescription = null,
+                                        tint = primaryAccent,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "AI SUBJECT & TASK STRATEGIST",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 14.sp,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Live AI Roulette • Pace Reality Check • 2x XP Sprint",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary
+                                )
+                            }
                         }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { showSettingsDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "AI Settings",
-                                tint = CyberCyan,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        IconButton(onClick = onDismiss) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close",
-                                tint = TextSecondary
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { showSettingsDialog = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "AI Settings",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close Window",
+                                    tint = TextPrimary
+                                )
+                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // 2. Live Study Pace & Backlog Diagnostic Strip (Always Visible)
+                val isBehindPace = comebackCount > 0 || (allTodayCompletedSlices.isEmpty() && incompleteSlices.size >= 4)
+                val statusStripBorder = when {
+                    isBehindPace -> if (isNature) NatureLagRust else CyberCrimson
+                    allTodayCompletedSlices.size >= 2 -> if (isNature) NatureLeafGreen else CyberEmerald
+                    else -> borderCol
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = cardSurface,
+                    border = BorderStroke(1.dp, statusStripBorder.copy(alpha = 0.75f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            PaceMetricChip(
+                                label = "DONE TODAY",
+                                value = "${allTodayCompletedSlices.size}",
+                                valueColor = if (allTodayCompletedSlices.isNotEmpty()) CyberEmerald else TextSecondary,
+                                bgColor = elevatedSurface
+                            )
+                            PaceMetricChip(
+                                label = "WAITING",
+                                value = "${incompleteSlices.size}",
+                                valueColor = TextPrimary,
+                                bgColor = elevatedSurface
+                            )
+                            PaceMetricChip(
+                                label = "OVERDUE / LAG",
+                                value = "$comebackCount",
+                                valueColor = if (comebackCount > 0) CyberCrimson else TextSecondary,
+                                bgColor = elevatedSurface
+                            )
+                            PaceMetricChip(
+                                label = "STREAK",
+                                value = "${userStreakDays}d",
+                                valueColor = CyberAmber,
+                                bgColor = elevatedSurface
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val livePaceSummary = when {
+                            comebackCount > 0 -> "⚠️ Caution: You have $comebackCount lagging task(s) from earlier days. Spin and finish a task now so you don't fall further behind!"
+                            incompleteSlices.isEmpty() -> "🏆 Amazing work! You have completed every scheduled task in your queue today."
+                            allTodayCompletedSlices.isEmpty() -> "⚡ Pace Alert: 0 tasks completed so far today with ${incompleteSlices.size} waiting. Start your first 25m sprint now to prevent tonight's backlog!"
+                            else -> "🔥 Good momentum: ${allTodayCompletedSlices.size} done today! Keep going to clear the remaining ${incompleteSlices.size} task(s) on time."
+                        }
+                        Text(
+                            text = livePaceSummary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isBehindPace) CyberCrimson else TextSecondary,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 if (incompleteSlices.isEmpty() && sprintTimerState == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(ObsidianBackground)
-                            .padding(24.dp),
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(cardSurface)
+                            .border(1.dp, borderCol, RoundedCornerShape(16.dp))
+                            .padding(28.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No incomplete slices on this date yet! Add a study topic chain first to spin the Task Roulette.",
+                            text = "No incomplete slices on this date! Add a study topic chain first or switch dates to spin the AI Task Roulette.",
                             textAlign = TextAlign.Center,
-                            color = CyberCyan,
-                            fontSize = 13.sp,
+                            color = TextPrimary,
+                            fontSize = 13.5.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                 } else {
-                    if (incompleteSlices.isNotEmpty()) {
-                        // Slot Wheel List of Candidate Slices
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 220.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(ObsidianBackground)
-                                .border(1.dp, ObsidianBorder, RoundedCornerShape(14.dp))
-                                .verticalScroll(rememberScrollState())
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            incompleteSlices.forEachIndexed { idx, candidate ->
-                                val isHighlighted = (isSpinning && highlightedIndex % incompleteSlices.size == idx) ||
-                                    (!isSpinning && lockedItem?.slice?.sliceId == candidate.slice.sliceId)
-                                val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(candidate.chain.chainId)
-                                val sColor = if (customLink != null) {
-                                    Color(customLink.colorHex)
-                                } else {
-                                    candidate.chain.subject.brandColor()
-                                }
-
-                                val todayEpoch = remember { LocalDate.now().toEpochDay() }
-                                val activeExams = remember { BatchExamStore.getActiveUpcomingExams() }
-                                val bucket = when {
-                                    candidate.slice.scheduledDateEpochDay < todayEpoch || candidate.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
-                                    activeExams.any { it.matchesSlice(candidate) } -> WorkloadBucket.BATCH_EXAM
-                                    else -> WorkloadBucket.TODAY_NORMAL
-                                }
-                                val (badgeText, badgeBg, badgeTextColor) = when (bucket) {
-                                    WorkloadBucket.COMEBACK_LEFTOVER -> Triple("🔥 COMEBACK", Color(0x33FF5252), Color(0xFFFF5252))
-                                    WorkloadBucket.BATCH_EXAM -> Triple("📝 EXAM", Color(0x33E040FB), Color(0xFFE040FB))
-                                    WorkloadBucket.TODAY_NORMAL -> Triple("📅 TODAY", Color(0x3300E5FF), Color(0xFF00E5FF))
-                                }
-
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isHighlighted) sColor.copy(alpha = 0.24f) else ObsidianSurfaceElevated,
-                                    border = BorderStroke(
-                                        width = if (isHighlighted) 1.8.dp else 1.dp,
-                                        color = if (isHighlighted) CyberAmber else ObsidianBorder
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(4.dp),
-                                                color = badgeBg,
-                                                modifier = Modifier.padding(end = 6.dp)
-                                            ) {
-                                                Text(
-                                                    text = badgeText,
-                                                    fontSize = 8.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = badgeTextColor,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                            Text(
-                                                text = candidate.slice.shortBadge,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = sColor,
-                                                fontSize = 11.sp
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = candidate.slice.displayTitle,
-                                                fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.Normal,
-                                                color = if (isHighlighted) TextPrimary else TextSecondary,
-                                                fontSize = 12.sp,
-                                                maxLines = 1
-                                            )
-                                        }
-                                        if (isHighlighted && !isSpinning && lockedItem != null) {
-                                            Text(
-                                                text = "🎯 LOCKED",
-                                                fontFamily = FontFamily.Monospace,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                fontSize = 10.sp,
-                                                color = CyberAmber
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
-                    }
-
-                    // Spin Button (when not currently running a 25-min sprint)
+                    // 3. Spin Button (Prominent Action Trigger)
                     if (sprintTimerState?.isSprintRunning != true) {
                         Button(
                             onClick = { onTriggerSpin() },
                             enabled = !isSpinning && incompleteSlices.isNotEmpty(),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSpinning) CyberAmber else CyberMagenta,
-                                contentColor = if (isSpinning) ObsidianBackground else Color.White
+                                containerColor = if (isSpinning) CyberAmber else primaryAccent,
+                                contentColor = if (isNature) Color(0xFF00210E) else Color(0xFF09090B)
                             ),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
+                                .height(52.dp)
                         ) {
                             Icon(
                                 imageVector = if (isSpinning) Icons.Default.AutoAwesome else Icons.Default.Casino,
@@ -384,143 +424,37 @@ fun TaskRouletteModal(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = if (isSpinning) "🧠 AI SYNAPSES FIRING... LIVE TELEMETRY" else "🎲 SPIN TASK ROULETTE",
+                                text = if (isSpinning) {
+                                    "🧠 AI ANALYZING PACE, LAG & SUBJECTS..."
+                                } else {
+                                    "🎲 SPIN AI SUBJECT & TASK ROULETTE"
+                                },
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 13.5.sp
                             )
                         }
-                    }
-
-                    // Rich AI Behavioral & Cognitive Insight Card
-                    if (!isSpinning && lockedItem != null && aiRecommendation != null) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = ObsidianSurfaceElevated,
-                            border = BorderStroke(1.2.dp, CyberCyan.copy(alpha = 0.7f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = CyberCyan,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        Text(
-                                            text = if (aiRecommendation?.isOfflineFallback == true) "COGNITIVE HEURISTIC" else "GEMINI 3.8 FLASH • LIVE TELEMETRY",
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 10.sp,
-                                            color = CyberCyan
-                                        )
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(6.dp),
-                                        color = CyberCyan.copy(alpha = 0.15f),
-                                        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.4f))
-                                    ) {
-                                        Text(
-                                            text = aiRecommendation?.cognitiveTransitionTag ?: "COGNITIVE REBOUND",
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 9.sp,
-                                            color = CyberCyan,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Text(
-                                    text = aiRecommendation?.behaviorAnalysisNote ?: "",
-                                    fontSize = 11.5.sp,
-                                    color = TextPrimary,
-                                    lineHeight = 15.sp
-                                )
-
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                Text(
-                                    text = "🎯 Why now: ${aiRecommendation?.whyThisTaskNow ?: ""}",
-                                    fontSize = 11.sp,
-                                    color = TextSecondary,
-                                    lineHeight = 14.sp
-                                )
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                Text(
-                                    text = "⏭️ Next recommended: ${aiRecommendation?.nextRecommendedAfterThis ?: ""}",
-                                    fontSize = 10.5.sp,
-                                    color = TextMuted,
-                                    lineHeight = 14.sp
-                                )
-
-                                if (sprintTimerState?.isSprintRunning != true) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    OutlinedButton(
-                                        onClick = {
-                                            val currentWinner = lockedItem
-                                            if (currentWinner != null) {
-                                                CustomSubjectAndAiStore.addRejectedSlice(currentWinner.slice.sliceId)
-                                            }
-                                            onTriggerSpin()
-                                        },
-                                        border = BorderStroke(1.dp, CyberAmber.copy(alpha = 0.7f)),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberAmber),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(34.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        Text(
-                                            text = "🎲 Re-Spin (Skip & Rebalance)",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
                     }
 
-                    // 60-Second Acceptance Window OR Active 25-Minute Micro-Sprint Timer
+                    // 4. 60-Second Acceptance Window OR Active 25-Minute Micro-Sprint Timer
                     if (sprintTimerState != null) {
-                        Spacer(modifier = Modifier.height(16.dp))
-
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(ObsidianSurfaceElevated)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(cardSurface)
                                 .border(
                                     1.5.dp,
                                     if (sprintTimerState.isSprintRunning) CyberEmerald else CyberAmber,
-                                    RoundedCornerShape(14.dp)
+                                    RoundedCornerShape(16.dp)
                                 )
-                                .padding(14.dp)
+                                .padding(16.dp)
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 if (!sprintTimerState.isSprintRunning) {
-                                    // 60-Second Acceptance Window
                                     Text(
                                         text = "⚡ 60s ACCEPTANCE WINDOW FOR 2X XP MULTIPLIER",
                                         fontFamily = FontFamily.Monospace,
@@ -531,8 +465,8 @@ fun TaskRouletteModal(
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = sprintTimerState.targetSliceTitle,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 15.sp,
                                         color = TextPrimary,
                                         textAlign = TextAlign.Center
                                     )
@@ -542,7 +476,7 @@ fun TaskRouletteModal(
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
-                                        color = if (sprintTimerState.acceptanceSecondsRemaining > 10) CyberCyan else CyberCrimson
+                                        color = if (sprintTimerState.acceptanceSecondsRemaining > 10) TextPrimary else CyberCrimson
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Button(
@@ -552,10 +486,12 @@ fun TaskRouletteModal(
                                         },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = CyberEmerald,
-                                            contentColor = Color(0xFF00210E)
+                                            contentColor = Color(0xFF052E16)
                                         ),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.fillMaxWidth()
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp)
                                     ) {
                                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
                                         Spacer(modifier = Modifier.width(6.dp))
@@ -565,7 +501,6 @@ fun TaskRouletteModal(
                                         )
                                     }
                                 } else {
-                                    // Built-in 25-Minute Micro-Sprint Countdown Timer
                                     val mins = sprintTimerState.sprintSecondsRemaining / 60
                                     val secs = sprintTimerState.sprintSecondsRemaining % 60
                                     val timeFormatted = String.format("%02d:%02d", mins, secs)
@@ -605,13 +540,13 @@ fun TaskRouletteModal(
                                         text = timeFormatted,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 34.sp,
+                                        fontSize = 36.sp,
                                         color = TextPrimary
                                     )
 
                                     Text(
                                         text = sprintTimerState.targetSliceTitle,
-                                        fontSize = 12.sp,
+                                        fontSize = 12.5.sp,
                                         color = TextSecondary,
                                         textAlign = TextAlign.Center
                                     )
@@ -621,7 +556,7 @@ fun TaskRouletteModal(
                                     LinearProgressIndicator(
                                         progress = { sprintProgress },
                                         color = if (sprintTimerState.isSprintPaused) CyberAmber else CyberEmerald,
-                                        trackColor = ObsidianBackground,
+                                        trackColor = windowBg,
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(8.dp)
@@ -636,26 +571,26 @@ fun TaskRouletteModal(
                                     ) {
                                         OutlinedButton(
                                             onClick = onStopSprint,
-                                            border = BorderStroke(1.dp, ObsidianBorder),
+                                            border = BorderStroke(1.dp, borderCol),
                                             modifier = Modifier.weight(0.9f)
                                         ) {
                                             Text("Abort", color = TextMuted, fontSize = 12.sp)
                                         }
                                         OutlinedButton(
                                             onClick = onTogglePauseSprint,
-                                            border = BorderStroke(1.dp, CyberCyan),
+                                            border = BorderStroke(1.dp, TextSecondary),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(
                                                 imageVector = if (sprintTimerState.isSprintPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
                                                 contentDescription = "Pause/Resume",
-                                                tint = CyberCyan,
+                                                tint = TextPrimary,
                                                 modifier = Modifier.size(15.dp)
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text(
                                                 text = if (sprintTimerState.isSprintPaused) "Resume" else "Pause",
-                                                color = CyberCyan,
+                                                color = TextPrimary,
                                                 fontSize = 12.sp
                                             )
                                         }
@@ -666,7 +601,7 @@ fun TaskRouletteModal(
                                             },
                                             colors = ButtonDefaults.buttonColors(
                                                 containerColor = CyberEmerald,
-                                                contentColor = Color(0xFF00210E)
+                                                contentColor = Color(0xFF052E16)
                                             ),
                                             modifier = Modifier.weight(1.3f)
                                         ) {
@@ -677,6 +612,479 @@ fun TaskRouletteModal(
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
                                             Text("Done", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    // 5. Locked Winner Chapter Showcase & AI Coach Verdict ("HOW YOU ARE GOING" Caution / Encouragement)
+                    if (!isSpinning && lockedItem != null && aiRecommendation != null) {
+                        val winner = lockedItem!!
+                        val rec = aiRecommendation!!
+                        val winnerCustom = CustomSubjectAndAiStore.getCustomSubjectForChain(winner.chain.chainId)
+                        val winnerSubName = winnerCustom?.customSubjectName ?: winner.chain.subject.fullName
+                        val winnerPaper = if (winnerCustom != null) {
+                            if (winnerCustom.hasSecondPaper && winner.chain.paper != HscPaper.SINGLE) "$winnerSubName • ${winner.chain.paper.compactTitleLabel}" else winnerSubName
+                        } else if (winner.chain.subject.isSinglePaperOnly || winner.chain.paper == HscPaper.SINGLE) {
+                            winnerSubName
+                        } else {
+                            "$winnerSubName • ${winner.chain.paper.compactTitleLabel}"
+                        }
+                        val winnerBanglaChapter = winner.chain.chapterName.trim().ifEmpty {
+                            HscSyllabusCatalog.getChapterNameBangla(
+                                winner.chain.subject,
+                                winner.chain.paper,
+                                winner.chain.chapterNumber
+                            )
+                        }
+                        val winnerBnCh = HscSyllabusCatalog.toBanglaDigits(winner.chain.chapterNumber)
+
+                        // A. Selected Subject & Chapter Hero Card
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = cardSurface,
+                            border = BorderStroke(1.5.dp, primaryAccent.copy(alpha = 0.85f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "🎯 AI SELECTED SUBJECT & CHAPTER",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 10.5.sp,
+                                        color = TextSecondary
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = elevatedSurface,
+                                        border = BorderStroke(1.dp, borderCol)
+                                    ) {
+                                        Text(
+                                            text = "Day ${winner.slice.sliceNumber}/${winner.slice.totalSlicesInChain} • ${winner.slice.phaseTag}",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp,
+                                            color = TextPrimary,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = primaryAccent
+                                    ) {
+                                        Text(
+                                            text = "CH ${winner.chain.chapterNumber} • অধ্যায় $winnerBnCh",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 11.sp,
+                                            color = if (isNature) Color(0xFF00210E) else Color(0xFF09090B),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = winnerPaper.uppercase(),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 12.sp,
+                                        color = TextSecondary
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Text(
+                                    text = winnerBanglaChapter,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = TextPrimary
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // B. AI COACH REALITY CHECK CARD ("HOW YOU ARE GOING" — Caution / Encouraging Feedback)
+                        val isCriticalCaution = rec.coachStatusLevel.equals("CRITICAL_CAUTION", ignoreCase = true)
+                        val isHighMomentum = rec.coachStatusLevel.equals("HIGH_MOMENTUM", ignoreCase = true)
+                        val coachAccent = when {
+                            isCriticalCaution -> CyberCrimson
+                            isHighMomentum -> CyberEmerald
+                            else -> CyberAmber
+                        }
+                        val coachBadgeLabel = when {
+                            isCriticalCaution -> "⚠️ CAUTION • LAG & BACKLOG WARNING"
+                            isHighMomentum -> "🔥 ENCOURAGEMENT • STRONG PACE"
+                            else -> "⚡ PACE CHECK • STAY ON SCHEDULE"
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = cardSurface,
+                            border = BorderStroke(1.5.dp, coachAccent.copy(alpha = 0.85f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = if (isCriticalCaution) Icons.Default.WarningAmber else Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = coachAccent,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "AI COACH: HOW YOU ARE GOING",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 11.sp,
+                                            color = coachAccent
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = coachAccent.copy(alpha = 0.14f),
+                                        border = BorderStroke(1.dp, coachAccent.copy(alpha = 0.5f))
+                                    ) {
+                                        Text(
+                                            text = coachBadgeLabel,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 8.5.sp,
+                                            color = coachAccent,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                if (rec.coachHeadline.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = rec.coachHeadline,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 14.sp,
+                                        color = TextPrimary
+                                    )
+                                }
+
+                                if (rec.coachHonestComment.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = rec.coachHonestComment,
+                                        fontSize = 12.5.sp,
+                                        color = TextPrimary.copy(alpha = 0.92f),
+                                        lineHeight = 17.sp
+                                    )
+                                }
+
+                                if (rec.lagConsequenceWarning.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(coachAccent.copy(alpha = 0.10f))
+                                            .border(1.dp, coachAccent.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                            .padding(10.dp)
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "⏳ IF YOU DO NOT FINISH THIS TASK TODAY:",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 10.sp,
+                                                color = coachAccent
+                                            )
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Text(
+                                                text = rec.lagConsequenceWarning,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = TextPrimary,
+                                                lineHeight = 15.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // C. Deep AI Cognitive Strategy & 25-Minute Tactical Plan Card
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = cardSurface,
+                            border = BorderStroke(1.dp, borderCol),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (rec.isOfflineFallback) "SMART COGNITIVE STRATEGIST" else "LIVE GEMINI AI • TELEMETRY",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 10.5.sp,
+                                        color = TextSecondary
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = elevatedSurface,
+                                        border = BorderStroke(1.dp, borderCol)
+                                    ) {
+                                        Text(
+                                            text = rec.cognitiveTransitionTag,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp,
+                                            color = TextPrimary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "🎯 Why this chapter now: ${rec.whyThisTaskNow}",
+                                    fontSize = 12.sp,
+                                    color = TextPrimary,
+                                    lineHeight = 16.sp
+                                )
+
+                                if (rec.stepByStepSprintPlan.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(elevatedSurface)
+                                            .border(1.dp, borderCol, RoundedCornerShape(10.dp))
+                                            .padding(10.dp)
+                                    ) {
+                                        Column {
+                                            Text(
+                                                text = "⏱️ 25-MINUTE MICRO-SPRINT GAMEPLAN",
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 10.sp,
+                                                color = TextSecondary
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = rec.stepByStepSprintPlan,
+                                                fontSize = 11.5.sp,
+                                                color = TextPrimary,
+                                                lineHeight = 16.sp
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "🧠 Circadian Note: ${rec.behaviorAnalysisNote}",
+                                    fontSize = 11.sp,
+                                    color = TextSecondary,
+                                    lineHeight = 15.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Text(
+                                    text = "⏭️ Next after this: ${rec.nextRecommendedAfterThis}",
+                                    fontSize = 11.sp,
+                                    color = TextMuted,
+                                    lineHeight = 15.sp
+                                )
+
+                                if (sprintTimerState?.isSprintRunning != true) {
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            val currentWinner = lockedItem
+                                            if (currentWinner != null) {
+                                                CustomSubjectAndAiStore.addRejectedSlice(currentWinner.slice.sliceId)
+                                            }
+                                            onTriggerSpin()
+                                        },
+                                        border = BorderStroke(1.dp, borderCol),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(38.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "🎲 Re-Spin Another Subject (Skip & Rebalance)",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    // 6. Candidate Pool List (With Clear Subject + Chapter Number + Chapter Name)
+                    if (incompleteSlices.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = cardSurface,
+                            border = BorderStroke(1.dp, borderCol),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "CANDIDATE POOL (${incompleteSlices.size} SLICES)",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 11.sp,
+                                        color = TextSecondary
+                                    )
+                                    Text(
+                                        text = "3-Bucket Balanced Pool",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        color = TextMuted
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 260.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    incompleteSlices.forEachIndexed { idx, candidate ->
+                                        val isHighlighted = (isSpinning && highlightedIndex % incompleteSlices.size == idx) ||
+                                            (!isSpinning && lockedItem?.slice?.sliceId == candidate.slice.sliceId)
+                                        val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(candidate.chain.chainId)
+                                        val sColor = if (customLink != null) {
+                                            Color(customLink.colorHex).harmonizeForBlackUi()
+                                        } else {
+                                            candidate.chain.subject.brandColor()
+                                        }
+
+                                        val bucket = when {
+                                            candidate.slice.scheduledDateEpochDay < todayEpoch || candidate.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+                                            activeExams.any { it.matchesSlice(candidate) } -> WorkloadBucket.BATCH_EXAM
+                                            else -> WorkloadBucket.TODAY_NORMAL
+                                        }
+                                        val (badgeText, badgeBg, badgeTextColor) = when (bucket) {
+                                            WorkloadBucket.COMEBACK_LEFTOVER -> Triple("🔥 LAG", CyberCrimson.copy(alpha = 0.16f), CyberCrimson)
+                                            WorkloadBucket.BATCH_EXAM -> Triple("📝 EXAM", CyberAmber.copy(alpha = 0.16f), CyberAmber)
+                                            WorkloadBucket.TODAY_NORMAL -> Triple("📅 TODAY", elevatedSurface, TextSecondary)
+                                        }
+
+                                        val chBangla = candidate.chain.chapterName.trim().ifEmpty {
+                                            HscSyllabusCatalog.getChapterNameBangla(
+                                                candidate.chain.subject,
+                                                candidate.chain.paper,
+                                                candidate.chain.chapterNumber
+                                            )
+                                        }
+                                        val subShort = customLink?.customShortCode ?: candidate.chain.subject.shortCode
+
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = if (isHighlighted) primaryAccent.copy(alpha = 0.14f) else elevatedSurface,
+                                            border = BorderStroke(
+                                                width = if (isHighlighted) 1.6.dp else 1.dp,
+                                                color = if (isHighlighted) primaryAccent else borderCol
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = badgeBg,
+                                                        modifier = Modifier.padding(end = 6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = badgeText,
+                                                            fontSize = 8.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = badgeTextColor,
+                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = "$subShort • Ch ${candidate.chain.chapterNumber}",
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = sColor,
+                                                        fontSize = 11.sp
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Text(
+                                                        text = chBangla,
+                                                        fontWeight = if (isHighlighted) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                                        color = if (isHighlighted) TextPrimary else TextSecondary,
+                                                        fontSize = 12.5.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                if (isHighlighted && !isSpinning && lockedItem != null) {
+                                                    Text(
+                                                        text = "🎯 LOCKED",
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        fontSize = 10.sp,
+                                                        color = primaryAccent
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -706,6 +1114,39 @@ fun TaskRouletteModal(
 }
 
 @Composable
+private fun PaceMetricChip(
+    label: String,
+    value: String,
+    valueColor: Color,
+    bgColor: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = bgColor
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = value,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 14.sp,
+                color = valueColor
+            )
+            Text(
+                text = label,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 8.5.sp,
+                color = TextMuted
+            )
+        }
+    }
+}
+
+@Composable
 fun RouletteSecurityPasscodeDialog(
     onDismiss: () -> Unit,
     onUnlocked: () -> Unit
@@ -730,7 +1171,7 @@ fun RouletteSecurityPasscodeDialog(
         Surface(
             shape = RoundedCornerShape(20.dp),
             color = ObsidianSurface,
-            border = BorderStroke(1.5.dp, CyberMagenta),
+            border = BorderStroke(1.5.dp, ObsidianBorder),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -739,7 +1180,6 @@ fun RouletteSecurityPasscodeDialog(
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -749,7 +1189,7 @@ fun RouletteSecurityPasscodeDialog(
                         Icon(
                             imageVector = Icons.Default.Security,
                             contentDescription = null,
-                            tint = CyberMagenta,
+                            tint = TextPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -758,7 +1198,7 @@ fun RouletteSecurityPasscodeDialog(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 13.5.sp,
-                            color = CyberMagenta
+                            color = TextPrimary
                         )
                     }
                     IconButton(onClick = onDismiss) {
@@ -770,16 +1210,16 @@ fun RouletteSecurityPasscodeDialog(
 
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = CyberMagenta.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, CyberMagenta.copy(alpha = 0.35f)),
+                    color = ObsidianSurfaceElevated,
+                    border = BorderStroke(1.dp, ObsidianBorder),
                     modifier = Modifier.size(60.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.Lock,
                             contentDescription = null,
-                            tint = CyberMagenta,
-                            modifier = Modifier.size(30.dp)
+                            tint = TextPrimary,
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -845,10 +1285,10 @@ fun RouletteSecurityPasscodeDialog(
                         color = TextPrimary
                     ),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = CyberMagenta,
+                        focusedBorderColor = TextPrimary,
                         unfocusedBorderColor = ObsidianBorder,
                         errorBorderColor = CyberCrimson,
-                        focusedLabelColor = CyberMagenta,
+                        focusedLabelColor = TextPrimary,
                         unfocusedLabelColor = TextSecondary,
                         errorLabelColor = CyberCrimson
                     ),
@@ -886,8 +1326,8 @@ fun RouletteSecurityPasscodeDialog(
                         onClick = submitPasscode,
                         enabled = passcodeInput.length == 4,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = CyberMagenta,
-                            contentColor = Color.White
+                            containerColor = TextPrimary,
+                            contentColor = ObsidianBackground
                         ),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)

@@ -85,6 +85,7 @@ import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.TextSecondary
 import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.theme.harmonizeForBlackUi
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -169,12 +170,10 @@ fun AddHscTopicModal(
             HscSyllabusCatalog.getChaptersFor(selectedSubject, effectivePaper)
         }
     }
-    val subjectColor = remember(selectedSubject, selectedCustomSubject) {
-        if (selectedCustomSubject != null) {
-            Color(selectedCustomSubject!!.colorHex)
-        } else {
-            selectedSubject.brandColor()
-        }
+    val subjectColor = if (selectedCustomSubject != null) {
+        Color(selectedCustomSubject!!.colorHex).harmonizeForBlackUi()
+    } else {
+        selectedSubject.brandColor()
     }
     val dateFormatter = remember { DateTimeFormatter.ofPattern("EEE, MMM d") }
 

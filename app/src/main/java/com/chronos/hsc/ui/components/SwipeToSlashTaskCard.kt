@@ -84,6 +84,7 @@ import com.chronos.hsc.ui.theme.TextMuted
 import com.chronos.hsc.ui.theme.TextPrimary
 import com.chronos.hsc.ui.theme.TextSecondary
 import com.chronos.hsc.ui.theme.brandColor
+import com.chronos.hsc.ui.theme.harmonizeForBlackUi
 import com.chronos.hsc.ui.theme.AppThemeMode
 import com.chronos.hsc.ui.theme.LocalAppThemeMode
 import com.chronos.hsc.ui.theme.LocalNatureCritterType
@@ -137,7 +138,7 @@ fun SwipeToSlashTaskCard(
     }
     val customSub = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
     val subjectColor = if (customSub != null) {
-        Color(customSub.colorHex)
+        Color(customSub.colorHex).harmonizeForBlackUi()
     } else {
         chain.subject.brandColor()
     }
@@ -421,24 +422,33 @@ fun SwipeToSlashTaskCard(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        (if (isNature) NatureAutumnOrange else Color(0xFFE040FB)).copy(alpha = 0.22f),
-                                        (if (isNature) NatureLagRust else Color(0xFFFF1744)).copy(alpha = 0.22f)
+                                if (isNature) {
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            NatureAutumnOrange.copy(alpha = 0.22f),
+                                            NatureLagRust.copy(alpha = 0.22f)
+                                        )
                                     )
-                                )
+                                } else {
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            Color(0xFF1F1924),
+                                            Color(0xFF18181F)
+                                        )
+                                    )
+                                }
                             )
                             .border(
                                 1.dp,
-                                if (isUrgentExam) Color(0xFFFF1744).copy(alpha = 0.9f)
-                                else (if (isNature) NatureAutumnOrange else Color(0xFFE040FB)).copy(alpha = 0.7f),
+                                if (isUrgentExam) CyberCrimson.copy(alpha = 0.85f)
+                                else (if (isNature) NatureAutumnOrange.copy(alpha = 0.7f) else Color(0xFF3F3F46)),
                                 RoundedCornerShape(8.dp)
                             )
                             .padding(horizontal = 9.dp, vertical = 5.dp)
                     ) {
                         Text(
                             text = "🎯 PRIVATE EXAM IN $daysText • $examFormat • Need ~${reqHours}h",
-                            color = if (isUrgentExam) Color(0xFFFF5252) else (if (isNature) NatureAutumnOrange else Color(0xFFFF80AB)),
+                            color = if (isUrgentExam) CyberCrimson else (if (isNature) NatureAutumnOrange else Color(0xFFE4E4E7)),
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -449,17 +459,30 @@ fun SwipeToSlashTaskCard(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // 1. Top Boss Health Bar for this task's parent chapter chain
-                BossHealthBar(
-                    chain = chain,
-                    coreSlices = item.coreSiblingSlices,
-                    currentBossHp = item.currentBossHp,
-                    compact = true
-                )
+                // Resolve Subject, Paper, and Chapter Names clearly
+                val banglaChapterName = chain.chapterName.trim().ifEmpty {
+                    HscSyllabusCatalog.getChapterNameBangla(
+                        chain.subject,
+                        chain.paper,
+                        chain.chapterNumber
+                    )
+                }
+                val bnCh = HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)
+                val bnSlice = HscSyllabusCatalog.toBanglaDigits(slice.sliceNumber)
+                val subjectDisplayName = customSub?.customSubjectName ?: chain.subject.fullName
+                val paperLabel = if (customSub != null) {
+                    if (customSub.hasSecondPaper && chain.paper != HscPaper.SINGLE) {
+                        "$subjectDisplayName • ${chain.paper.compactTitleLabel}"
+                    } else {
+                        subjectDisplayName
+                    }
+                } else if (chain.subject.isSinglePaperOnly || chain.paper == HscPaper.SINGLE) {
+                    subjectDisplayName
+                } else {
+                    "$subjectDisplayName • ${chain.paper.compactTitleLabel}"
+                }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // 2. Badges Row: Subject ShortCode, Short Slice Badge, Phase Tag, Energy & Multipliers
+                // 1. Top Eyebrow Row: Subject & Paper Identity, Phase Tag, and Status Indicators
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -470,55 +493,60 @@ fun SwipeToSlashTaskCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        // Subject Emblem
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(subjectColor.copy(alpha = 0.2f))
-                                .border(1.dp, subjectColor.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 7.dp, vertical = 2.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = chain.subject.shortCode,
-                                color = subjectColor,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 11.sp
-                            )
-                        }
-
-                        // Slice Badge (e.g., HF Ch 4-2)
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(ObsidianSurfaceElevated)
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = slice.shortBadge,
-                                color = TextPrimary,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-                        }
-
-                        // Phase Tag (e.g., [Textbook & Examples] or [Retention Echo])
+                        // Subject & Paper Pill
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(
-                                    if (slice.isRetentionEcho) CyberMagenta.copy(alpha = 0.18f)
-                                    else CyberCyan.copy(alpha = 0.12f)
+                                    if (isNature) subjectColor.copy(alpha = 0.2f)
+                                    else ObsidianSurfaceElevated
                                 )
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                                .border(
+                                    1.dp,
+                                    if (isNature) subjectColor.copy(alpha = 0.7f)
+                                    else Color(0xFF32323E),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "[${slice.phaseTag}]",
-                                color = if (slice.isRetentionEcho) Color(0xFFEA80FC) else CyberCyan,
+                                text = paperLabel.uppercase(),
+                                color = if (isNature) subjectColor else Color(0xFFE4E4E7),
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 10.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        // Phase Tag (e.g., Textbook & Examples or Retention Echo)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (isNature) {
+                                        if (slice.isRetentionEcho) Color(0xFFD500F9).copy(alpha = 0.18f)
+                                        else Color(0xFF00E5FF).copy(alpha = 0.12f)
+                                    } else {
+                                        Color(0xFF141419)
+                                    }
+                                )
+                                .border(
+                                    width = if (isNature) 0.dp else 1.dp,
+                                    color = if (isNature) Color.Transparent else Color(0xFF272730),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = slice.phaseTag,
+                                color = if (isNature) {
+                                    if (slice.isRetentionEcho) Color(0xFFEA80FC) else Color(0xFF00E5FF)
+                                } else {
+                                    TextSecondary
+                                },
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -546,28 +574,28 @@ fun SwipeToSlashTaskCard(
                                 )
                             }
                         }
-                    // Lag Status Badge
-                    if (slice.isLagging) {
-                        val lagDays = slice.effectiveLagDays
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isNature) NatureLagRust.copy(alpha = 0.22f) else CyberCrimson.copy(alpha = 0.22f))
-                                .border(1.dp, if (isNature) NatureLagRust else CyberCrimson, RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = if (isNature) "🍂 +${lagDays}d LATE" else "⚠️ +${lagDays}d LAG",
-                                color = if (isNature) NatureLagRust else CyberCrimson,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+
+                        // Lag Status Badge
+                        if (slice.isLagging) {
+                            val lagDays = slice.effectiveLagDays
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isNature) NatureLagRust.copy(alpha = 0.22f) else CyberCrimson.copy(alpha = 0.16f))
+                                    .border(1.dp, if (isNature) NatureLagRust else CyberCrimson.copy(alpha = 0.75f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (isNature) "🍂 +${lagDays}d LATE" else "⚠️ +${lagDays}d LAG",
+                                    color = if (isNature) NatureLagRust else CyberCrimson,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
                     }
 
                     // 2x XP Multiplier or Ready-to-Slash Indicator
@@ -575,8 +603,8 @@ fun SwipeToSlashTaskCard(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(CyberAmber.copy(alpha = 0.22f))
-                                .border(1.dp, CyberAmber, RoundedCornerShape(6.dp))
+                                .background(CyberAmber.copy(alpha = 0.16f))
+                                .border(1.dp, CyberAmber.copy(alpha = 0.8f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -593,7 +621,7 @@ fun SwipeToSlashTaskCard(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(CyberEmerald.copy(alpha = 0.22f))
+                                .background(CyberEmerald.copy(alpha = 0.18f))
                                 .border(1.dp, CyberEmerald, RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
@@ -610,57 +638,126 @@ fun SwipeToSlashTaskCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(9.dp))
 
-                // 3. Task Slice Title (Full Bangla Chapter Name) + Energy Indicator
-                val banglaChapterName = chain.chapterName.trim().ifEmpty {
-                    HscSyllabusCatalog.getChapterNameBangla(
-                        chain.subject,
-                        chain.paper,
-                        chain.chapterNumber
-                    )
-                }
-                val bnCh = HscSyllabusCatalog.toBanglaDigits(chain.chapterNumber)
-                val bnSlice = HscSyllabusCatalog.toBanglaDigits(slice.sliceNumber)
-                val paperLabel = if (chain.subject.isSinglePaperOnly || chain.paper == HscPaper.SINGLE) {
-                    chain.subject.fullName
-                } else {
-                    "${chain.subject.fullName} ${chain.paper.compactTitleLabel}"
-                }
-                val resolvedCardTitle = if (slice.isRetentionEcho) {
-                    "$paperLabel • অধ্যায় $bnCh: $banglaChapterName (Echo +${slice.echoIntervalDays ?: 3}d)"
-                } else {
-                    "$paperLabel • অধ্যায় $bnCh ($bnSlice): $banglaChapterName"
+                // 2. HERO CHAPTER CALLOUT BOX (Instant Chapter Recognition without Squinting)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(
+                            if (isNature) TerrariumSurfaceElevated.copy(alpha = 0.75f)
+                            else Color(0xFF14141A)
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = if (isNature) TerrariumBorder else Color(0xFF282834),
+                            shape = RoundedCornerShape(11.dp)
+                        )
+                        .padding(horizontal = 11.dp, vertical = 9.dp)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // High-Contrast Chapter Number Pill
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isNature) {
+                                    NatureLeafGreen.copy(alpha = 0.24f)
+                                } else {
+                                    if (slice.isCompleted) Color(0xFF27272A) else Color(0xFFE4E4E7)
+                                },
+                                border = if (isNature) {
+                                    androidx.compose.foundation.BorderStroke(1.dp, NatureSproutLime.copy(alpha = 0.8f))
+                                } else null
+                            ) {
+                                Text(
+                                    text = "CHAPTER ${chain.chapterNumber} • অধ্যায় $bnCh",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 10.5.sp,
+                                    color = if (isNature) {
+                                        NatureSproutLime
+                                    } else {
+                                        if (slice.isCompleted) TextSecondary else Color(0xFF09090B)
+                                    },
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+
+                            // Slice Day / Part Indicator Pill
+                            Text(
+                                text = if (slice.isRetentionEcho) {
+                                    "🧠 Echo +${slice.echoIntervalDays ?: 3}d"
+                                } else {
+                                    "Day ${slice.sliceNumber}/${slice.totalSlicesInChain} • অংশ $bnSlice"
+                                },
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.5.sp,
+                                color = if (isNature) NatureFireflyGold else Color(0xFFA1A1AA)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Standalone Large, Bold Chapter Name
+                        Text(
+                            text = banglaChapterName,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (slice.isCompleted) TextMuted else TextPrimary,
+                            textDecoration = if (slice.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
-                Text(
-                    text = resolvedCardTitle,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (slice.isCompleted) TextMuted else TextPrimary,
-                    textDecoration = if (slice.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                Spacer(modifier = Modifier.height(9.dp))
+
+                // 3. Boss Health Bar + Slice Code & Energy Metadata
+                BossHealthBar(
+                    chain = chain,
+                    coreSlices = item.coreSiblingSlices,
+                    currentBossHp = item.currentBossHp,
+                    compact = true
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(5.dp))
 
                 val energyEmoji = when (item.effectiveEnergyLevel) {
                     EnergyLevel.HIGH_FOCUS -> "⚡ 100% High Focus"
                     EnergyLevel.MEDIUM -> "🔋 50% Medium"
                     EnergyLevel.ZOMBIE_MODE -> "🧟 15% Zombie Friendly"
                 }
-                Text(
-                    text = if (slice.isRetentionEcho) {
-                        "🧠 Spaced Repetition Echo • $energyEmoji"
-                    } else {
-                        "Slice ${slice.sliceNumber} of ${slice.totalSlicesInChain} • $energyEmoji"
-                    },
-                    fontSize = 11.sp,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (slice.isRetentionEcho) {
+                            "🧠 Spaced Repetition Echo • $energyEmoji"
+                        } else {
+                            "Slice ${slice.sliceNumber} of ${slice.totalSlicesInChain} • $energyEmoji"
+                        },
+                        fontSize = 10.5.sp,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = slice.shortBadge,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextMuted
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(10.dp))
 

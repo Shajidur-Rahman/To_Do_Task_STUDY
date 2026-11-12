@@ -3,7 +3,7 @@ package com.chronos.hsc.ui.theme
 enum class AppThemeMode(val title: String, val subtitle: String) {
     BLACK_LOVER(
         title = "Black Lover",
-        subtitle = "Cyberpunk Obsidian, Neon Cyan & Electric Purple"
+        subtitle = "Minimalist OLED Obsidian, Brushed Platinum & Champagne Gold"
     ),
     NATURE_LOVER(
         title = "Nature Lover",

@@ -294,15 +294,22 @@ object GeminiRouletteService {
         batteryModeLabel: String = "HIGH_FOCUS",
         pinnedExam: ExamCountdownEntity? = null,
         weeklySlicesByDay: Map<Long, List<SliceWithParentChain>> = emptyMap(),
-        upcomingBatchExams: List<BatchExamRecord> = BatchExamStore.getActiveUpcomingExams()
+        upcomingBatchExams: List<BatchExamRecord> = BatchExamStore.getActiveUpcomingExams(),
+        userStreakDays: Int = 0,
+        userLevel: Int = 1
     ): AiRouletteRecommendation = withContext(Dispatchers.IO) {
         if (candidateSlices.isEmpty()) {
             return@withContext AiRouletteRecommendation(
                 selectedSliceId = "",
-                cognitiveTransitionTag = "NO PENDING TASKS",
-                behaviorAnalysisNote = "All tasks on this date are already completed!",
-                whyThisTaskNow = "You have conquered all study slices for this day.",
+                cognitiveTransitionTag = "ALL SLICES CONQUERED",
+                behaviorAnalysisNote = "All scheduled tasks for this window are completed!",
+                whyThisTaskNow = "You have cleared every single slice in your queue.",
                 nextRecommendedAfterThis = "Take a well-deserved rest or review upcoming Ebbinghaus Echoes.",
+                coachStatusLevel = "HIGH_MOMENTUM",
+                coachHeadline = "🏆 FLAWLESS VICTORY: Queue 100% Cleared!",
+                coachHonestComment = "Incredible discipline! You have finished all your scheduled slices and prevented any backlog from carrying over into tomorrow.",
+                lagConsequenceWarning = "Zero lag risk — your syllabus timeline is completely clean.",
+                stepByStepSprintPlan = "• Review key formulas for 5 minutes\n• Hydrate and rest your prefrontal cortex",
                 isOfflineFallback = true
             )
         }
@@ -320,6 +327,10 @@ object GeminiRouletteService {
         val comebackSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.COMEBACK_LEFTOVER }
         val todayNormalSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
         val batchExamSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.BATCH_EXAM }
+
+        val totalCompletedToday = allTodayCompletedSlices.size
+        val totalRemainingCount = candidateSlices.size
+        val maxLagDays = candidateSlices.maxOfOrNull { it.slice.effectiveLagDays } ?: 0
 
         // Cooldown & Batch Exam Cap Guards
         val hasAlternativeSubject = candidateSlices.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
@@ -393,6 +404,9 @@ object GeminiRouletteService {
                     put("shortBadge", candidate.slice.shortBadge)
                     put("displayTitle", candidate.slice.displayTitle)
                     put("subject", subName)
+                    put("chapterNumber", candidate.chain.chapterNumber)
+                    put("chapterName", candidate.chain.chapterName)
+                    put("sliceDayProgress", "Day ${candidate.slice.sliceNumber} of ${candidate.slice.totalSlicesInChain}")
                     put("workloadBucket", bucket.name)
                     put("workloadBucketEmoji", bucket.emoji)
                     put("workloadBucketLabel", bucket.label)
@@ -434,19 +448,26 @@ object GeminiRouletteService {
             )
         }
 
-        // 6. Construct Non-Biased 3-Bucket & Circadian System Prompt
+        // 6. Construct Non-Biased 3-Bucket, Circadian & Honest Coach Reality-Check Prompt
         val prompt = """
-            You are the Chronos HSC AI Cognitive Roulette Engine — an elite neuro-productivity study strategist designed for HSC exam candidates in Bangladesh.
-            Your task is to analyze the student's live study telemetry and select the single optimal task slice from candidateSlices to beat procrastination, balance brain fatigue, and ensure steady progress across ALL subjects without tunnel vision.
+            You are the Chronos HSC Elite AI Study Coach & Cognitive Roulette Strategist — designed for HSC exam candidates in Bangladesh.
+            Your job has TWO critical parts:
+            PART A: Select the single best study slice from `candidateSlices` using balanced 3-bucket rotation and circadian neuroscience.
+            PART B: Give the student a brutally honest, deeply motivating "HOW YOU ARE GOING" Coach Reality Check (Caution if they are lagging or procrastinating; High-Conviction Encouragement if they are making strong progress).
 
             🕒 BANGLADESH TIME & CIRCADIAN PROFILE:
             - Current Bangladesh Time: ${bdTime.currentBdTimeFormatted}
             - Active Circadian Phase: ${bdTime.bdCircadianPhase}
 
-            📊 3 UNIFIED WORKLOAD BUCKETS IN TODAY'S CANDIDATE POOL:
-            1. 🔥 COMEBACK_LEFTOVER (${comebackSlices.size} tasks): Missed tasks from yesterday or past days (lag > 0). High risk of compounding procrastination!
-            2. 📅 TODAY_NORMAL (${todayNormalSlices.size} tasks): Today's standard scheduled HSC syllabus tasks. Essential for completing the core syllabus on time.
-            3. 📝 BATCH_EXAM (${batchExamSlices.size} tasks): Tasks matching upcoming private tuition / coaching batch exams.
+            📊 STUDENT'S LIVE PACE & BACKLOG TELEMETRY TODAY:
+            - Completed Slices Today: $totalCompletedToday
+            - Remaining Incomplete Slices in Pool: $totalRemainingCount
+            - Overdue / Lagging Slices from Yesterday & Past Days: ${comebackSlices.size} (Max Lag: ${maxLagDays}d)
+            - Today's Regular Syllabus Slices Pending: ${todayNormalSlices.size}
+            - Private / Coaching Exam Slices Pending: ${batchExamSlices.size}
+            - Student Level: LVL $userLevel | Current Streak: ${userStreakDays}d
+            - Mental Battery Mode: $batteryModeLabel ($batteryPercent%)
+            - Major Exam Countdown: ${pinnedExam?.let { val daysLeft = (it.targetDateEpochDay - todayEpoch).coerceAtLeast(0); "$daysLeft Days Left for ${it.examTitle}" } ?: "No major exam countdown"}
 
             📈 DAILY ROTATION TELEMETRY & ANTI-BIAS GUARDRAILS:
             - Spun Today: Comeback=${telemetry.spinsComeback}, Today Normal=${telemetry.spinsTodayNormal}, Batch Exam=${telemetry.spinsBatchExam}
@@ -458,20 +479,24 @@ object GeminiRouletteService {
             CRITICAL ANTI-BIAS & BALANCED ROTATION RULES:
             1. NO EXAM TUNNEL VISION: DO NOT repeatedly pick only Batch Exam tasks. Target workload distribution: ~35% Comeback Leftovers, ~40% Today Normal Tasks, ~25% Batch Exams.
             2. BATCH EXAM CAP: If Batch Exam is capped ($isBatchExamCapped) and Comeback or Today Normal tasks exist, you MUST pick from Comeback or Today Normal!
-            3. SUBJECT COOLDOWN: If a candidate has `isSubjectOnCooldown: true`, DO NOT select it unless all candidates belong to the same subject. Avoid studying the exact same subject twice in a row.
-            4. CIRCADIAN HARMONY: Align with ${bdTime.bdCircadianPhase}. In Morning peak or Night wrap-up, rescuing Comeback Leftovers or finishing Today Normal has priority over repeated exam drills.
+            3. SUBJECT COOLDOWN: If a candidate has `isSubjectOnCooldown: true`, DO NOT select it unless all candidates belong to the same subject.
+            4. CIRCADIAN HARMONY: Align with ${bdTime.bdCircadianPhase}.
             5. COGNITIVE ALTERNATION: Alternate HEAVY_ANALYTICAL calculation with SOFT_MEMORIZATION or BALANCED_CONCEPTUAL.
             6. AVOID REJECTED: Do NOT select any slice with `isRejectedInSession == true` if other candidates exist.
-            7. ZOMBIE MODE (15%): If battery is 15% Zombie, prioritize SOFT_MEMORIZATION or light review.
+
+            🧠 RULES FOR PART B — COACH REALITY CHECK ("HOW YOU ARE GOING"):
+            - Analyze $totalCompletedToday completed vs $totalRemainingCount remaining and ${comebackSlices.size} lagging tasks.
+            - `coachStatusLevel`:
+              * Set to `"CRITICAL_CAUTION"` if ${comebackSlices.size} > 0 or $maxLagDays > 0 or ($totalCompletedToday == 0 and $totalRemainingCount >= 4).
+              * Set to `"HIGH_MOMENTUM"` if $totalCompletedToday >= 2 and ${comebackSlices.size} == 0.
+              * Otherwise set to `"PACE_ALERT"`.
+            - `coachHeadline`: A bold, unmistakable status banner (e.g. "⚠️ CAUTION: ${comebackSlices.size} Overdue Tasks — Stop the Lag Now!" or "⚡ PACE WARNING: $totalRemainingCount Slices Waiting Today" or "🔥 ELITE MOMENTUM: $totalCompletedToday Slices Slashed Today!").
+            - `coachHonestComment`: 2 to 3 vivid, personal sentences speaking directly to the student ("You..."). If they have unfinished or lagging tasks, warn them clearly: tell them if they don't finish this selected chapter right now, they will lag behind their syllabus, tomorrow's tasks will stack up, and exam pressure will compound. If they are doing well, praise their discipline and push them to lock in this next chapter!
+            - `lagConsequenceWarning`: 1 specific, concrete sentence stating the exact consequence of skipping or delaying this selected task today (mention the exact subject/chapter and how many tasks will pile up tomorrow).
+            - `stepByStepSprintPlan`: A concrete 3-bullet 25-minute micro-sprint execution plan for this specific subject, chapter, and phaseTag (separated by `\n`).
 
             UPCOMING PRIVATE / COACHING BATCH EXAMS:
             $upcomingExamsArray
-
-            CURRENT CONTEXT:
-            - Mental Battery Mode: $batteryModeLabel ($batteryPercent%)
-            - Major Exam Urgency: ${pinnedExam?.let { val daysLeft = (it.targetDateEpochDay - todayEpoch).coerceAtLeast(0); "$daysLeft Days Left for ${it.examTitle}" } ?: "No major exam countdown"}
-            - Behavioral Log Note: ${if (behavioralNoteStringBuilder.isNotEmpty()) behavioralNoteStringBuilder.toString() else "Starting a fresh study session."}
-            - Rejected Slices This Session: ${rejectedSlices.joinToString(", ")}
 
             RECENTLY COMPLETED SLICES TODAY (Chronological):
             $completedArray
@@ -480,13 +505,18 @@ object GeminiRouletteService {
             $candidateArray
 
             STRICT OUTPUT FORMAT:
-            You must return a valid JSON object only with NO markdown fences, matching this schema:
+            Return a valid JSON object only with NO markdown fences, matching this exact schema:
             {
               "selectedSliceId": "exact sliceId from candidateSlices",
-              "cognitiveTransitionTag": "e.g. 🔥 COMEBACK HERO (Rescue Missed Task) or 📅 SYLLABUS MOMENTUM or 📝 EXAM RADAR",
-              "behaviorAnalysisNote": "Brief 1-sentence observation connecting Bangladesh circadian phase and telemetry balance",
-              "whyThisTaskNow": "1-2 punchy sentences explaining why this exact slice beats fatigue and keeps study balanced right now",
-              "nextRecommendedAfterThis": "Brief teaser of what contrasting bucket or subject to tackle after this 25m sprint"
+              "cognitiveTransitionTag": "e.g. 🔥 COMEBACK HERO | Rescue Missed Slice",
+              "behaviorAnalysisNote": "1-sentence observation connecting Bangladesh time (${bdTime.currentBdTimeFormatted}) and workload balance",
+              "whyThisTaskNow": "1-2 punchy sentences explaining why this exact chapter & subject is optimal right now",
+              "nextRecommendedAfterThis": "What contrasting subject/bucket to tackle after this 25m sprint",
+              "coachStatusLevel": "CRITICAL_CAUTION or PACE_ALERT or HIGH_MOMENTUM",
+              "coachHeadline": "Punchy headline about how the student is going right now",
+              "coachHonestComment": "2-3 honest coaching sentences (caution warning about lagging behind if unfinished, or strong encouragement)",
+              "lagConsequenceWarning": "Exact domino consequence if the student skips or delays this task today",
+              "stepByStepSprintPlan": "• Min 0-5: ...\n• Min 5-20: ...\n• Min 20-25: ..."
             }
         """.trimIndent()
 
@@ -499,7 +529,15 @@ object GeminiRouletteService {
         ).distinct()
 
         for (model in modelsToTry) {
-            val result = queryGeminiModel(model, apiKey, prompt, candidateSlices)
+            val result = queryGeminiModel(
+                model = model,
+                apiKey = apiKey,
+                prompt = prompt,
+                candidateSlices = candidateSlices,
+                totalCompletedToday = totalCompletedToday,
+                comebackCount = comebackSlices.size,
+                userStreakDays = userStreakDays
+            )
             if (result != null) {
                 val winner = candidateSlices.find { it.slice.sliceId == result.selectedSliceId }
                 if (winner != null) {
@@ -519,14 +557,15 @@ object GeminiRouletteService {
             }
         }
 
-        // 8. Local Heuristic Fallback with Balanced 3-Bucket & Circadian Logic
+        // 8. Local Heuristic Fallback with Balanced 3-Bucket, Circadian & Coach Reality-Check Logic
         val fallback = runSmartCognitiveAlternatingHeuristic(
             candidateSlices = candidateSlices,
             allTodayCompletedSlices = allTodayCompletedSlices,
             batteryPercent = batteryPercent,
             rejectedSlices = rejectedSlices,
             overrideNote = behavioralNoteStringBuilder.toString(),
-            upcomingBatchExams = upcomingBatchExams
+            upcomingBatchExams = upcomingBatchExams,
+            userStreakDays = userStreakDays
         )
         CustomSubjectAndAiStore.saveLastRecommendation(fallback)
         fallback
@@ -536,7 +575,10 @@ object GeminiRouletteService {
         model: String,
         apiKey: String,
         prompt: String,
-        candidateSlices: List<SliceWithParentChain>
+        candidateSlices: List<SliceWithParentChain>,
+        totalCompletedToday: Int,
+        comebackCount: Int,
+        userStreakDays: Int
     ): AiRouletteRecommendation? {
         if (apiKey.isBlank()) return null
         var connection: HttpURLConnection? = null
@@ -582,7 +624,13 @@ object GeminiRouletteService {
             val responseCode = connection.responseCode
             if (responseCode in 200..299) {
                 val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                parseGeminiResponse(responseText, candidateSlices)
+                parseGeminiResponse(
+                    jsonString = responseText,
+                    candidateSlices = candidateSlices,
+                    totalCompletedToday = totalCompletedToday,
+                    comebackCount = comebackCount,
+                    userStreakDays = userStreakDays
+                )
             } else {
                 null
             }
@@ -593,9 +641,90 @@ object GeminiRouletteService {
         }
     }
 
+    private fun buildDefaultCoachDiagnostics(
+        winner: SliceWithParentChain,
+        totalCompletedToday: Int,
+        totalPendingCount: Int,
+        comebackCount: Int,
+        userStreakDays: Int
+    ): CoachDiagnostics {
+        val subName = getSubjectName(winner)
+        val chNum = winner.chain.chapterNumber
+        val chName = winner.chain.chapterName.ifBlank { "Chapter $chNum" }
+        val lagDays = winner.slice.effectiveLagDays
+        val probTarget = winner.slice.problemsTarget
+        val probDone = winner.slice.problemsCompleted
+
+        val statusLevel = when {
+            comebackCount > 0 || lagDays > 0 || (totalCompletedToday == 0 && totalPendingCount >= 4) -> "CRITICAL_CAUTION"
+            totalCompletedToday >= 2 && comebackCount == 0 -> "HIGH_MOMENTUM"
+            else -> "PACE_ALERT"
+        }
+
+        val headline = when (statusLevel) {
+            "CRITICAL_CAUTION" -> if (comebackCount > 0) {
+                "⚠️ CAUTION: $comebackCount Lagging Task${if (comebackCount > 1) "s" else ""} Dragging Your Pace Down!"
+            } else {
+                "⚠️ PACE WARNING: 0 Completed Today with $totalPendingCount Tasks Waiting!"
+            }
+            "HIGH_MOMENTUM" -> "🔥 STRONG MOMENTUM: $totalCompletedToday Slashed Today — Keep Pushing!"
+            else -> "⚡ PACE CHECK: $totalCompletedToday Done, $totalPendingCount Remaining in Queue"
+        }
+
+        val honestComment = when (statusLevel) {
+            "CRITICAL_CAUTION" -> {
+                "Be careful — you currently have $totalPendingCount unfinished slices in your queue (including $comebackCount overdue from earlier days). " +
+                "If you don't finish [$subName • Ch $chNum: $chName] right now, your syllabus chain will slip further behind and tomorrow's schedule will pile up into a heavy bottleneck. Lock in for the next 25 minutes and break this lag!"
+            }
+            "HIGH_MOMENTUM" -> {
+                "You are in a great rhythm today with $totalCompletedToday slices already conquered${if (userStreakDays > 0) " and a ${userStreakDays}-day streak active" else ""}! " +
+                "Knocking out [$subName • Ch $chNum: $chName] right now will put you firmly ahead of your daily curve so nothing carries over into tomorrow."
+            }
+            else -> {
+                "You have $totalPendingCount slices waiting today and $totalCompletedToday completed so far. " +
+                "Don't let [$subName • Ch $chNum: $chName] sit until late at night — finishing this 25-minute sprint right now prevents last-minute fatigue and keeps your chapter chain on schedule."
+            }
+        }
+
+        val consequenceWarning = if (lagDays > 0) {
+            "Skipping this today pushes $subName Ch $chNum to +${lagDays + 1}d lag, adds +10% Boss Shield penalty, and overloads tomorrow with ${totalPendingCount + 1}+ tasks."
+        } else {
+            "Delaying this slice pushes $subName Ch $chNum (Day ${winner.slice.sliceNumber}/${winner.slice.totalSlicesInChain}) into tomorrow's queue and creates a Domino backlog."
+        }
+
+        val sprintPlan = if (probTarget > 0) {
+            "• Min 0–5: Review core formulas & examples for $subName Ch $chNum ($chName)\n" +
+            "• Min 5–20: Solve ${probTarget - probDone} remaining target problems (${winner.slice.phaseTag})\n" +
+            "• Min 20–25: Verify answers, log problem counter & slash the slice!"
+        } else {
+            "• Min 0–5: Skim key concepts & headings of $subName Ch $chNum ($chName)\n" +
+            "• Min 5–20: Deep active recall & note-making for [${winner.slice.phaseTag}]\n" +
+            "• Min 20–25: Quick self-test on core takeaways & slash the slice!"
+        }
+
+        return CoachDiagnostics(
+            statusLevel = statusLevel,
+            headline = headline,
+            honestComment = honestComment,
+            consequenceWarning = consequenceWarning,
+            sprintPlan = sprintPlan
+        )
+    }
+
+    private data class CoachDiagnostics(
+        val statusLevel: String,
+        val headline: String,
+        val honestComment: String,
+        val consequenceWarning: String,
+        val sprintPlan: String
+    )
+
     private fun parseGeminiResponse(
         jsonString: String,
-        candidateSlices: List<SliceWithParentChain>
+        candidateSlices: List<SliceWithParentChain>,
+        totalCompletedToday: Int,
+        comebackCount: Int,
+        userStreakDays: Int
     ): AiRouletteRecommendation? {
         return try {
             val root = JSONObject(jsonString)
@@ -612,13 +741,25 @@ object GeminiRouletteService {
 
             val sliceId = parsed.getString("selectedSliceId")
             val matchingCandidate = candidateSlices.find { it.slice.sliceId == sliceId } ?: candidateSlices.first()
+            val defaultCoach = buildDefaultCoachDiagnostics(
+                winner = matchingCandidate,
+                totalCompletedToday = totalCompletedToday,
+                totalPendingCount = candidateSlices.size,
+                comebackCount = comebackCount,
+                userStreakDays = userStreakDays
+            )
 
             AiRouletteRecommendation(
                 selectedSliceId = matchingCandidate.slice.sliceId,
-                cognitiveTransitionTag = parsed.optString("cognitiveTransitionTag", "🎯 AI EXAM RADAR LOCK"),
+                cognitiveTransitionTag = parsed.optString("cognitiveTransitionTag", "🎯 AI STRATEGIST LOCK"),
                 behaviorAnalysisNote = parsed.optString("behaviorAnalysisNote", "Telemetry analyzed upcoming exams and recent study pattern."),
                 whyThisTaskNow = parsed.optString("whyThisTaskNow", "Selected to maximize exam readiness and maintain cognitive rhythm."),
                 nextRecommendedAfterThis = parsed.optString("nextRecommendedAfterThis", "Ready to cascade to your next syllabus slice."),
+                coachStatusLevel = parsed.optString("coachStatusLevel", defaultCoach.statusLevel).ifBlank { defaultCoach.statusLevel },
+                coachHeadline = parsed.optString("coachHeadline", defaultCoach.headline).ifBlank { defaultCoach.headline },
+                coachHonestComment = parsed.optString("coachHonestComment", defaultCoach.honestComment).ifBlank { defaultCoach.honestComment },
+                lagConsequenceWarning = parsed.optString("lagConsequenceWarning", defaultCoach.consequenceWarning).ifBlank { defaultCoach.consequenceWarning },
+                stepByStepSprintPlan = parsed.optString("stepByStepSprintPlan", defaultCoach.sprintPlan).ifBlank { defaultCoach.sprintPlan },
                 isOfflineFallback = false
             )
         } catch (_: Exception) {
@@ -632,7 +773,8 @@ object GeminiRouletteService {
         batteryPercent: Int,
         rejectedSlices: Set<String>,
         overrideNote: String,
-        upcomingBatchExams: List<BatchExamRecord> = BatchExamStore.getActiveUpcomingExams()
+        upcomingBatchExams: List<BatchExamRecord> = BatchExamStore.getActiveUpcomingExams(),
+        userStreakDays: Int = 0
     ): AiRouletteRecommendation {
         val nonRejected = candidateSlices.filter { !rejectedSlices.contains(it.slice.sliceId) }
         val pool = if (nonRejected.isNotEmpty()) nonRejected else candidateSlices
@@ -693,7 +835,7 @@ object GeminiRouletteService {
                 ?: filteredC.first()
             val subName = getSubjectName(selectedSlice)
             transitionTag = "🔥 COMEBACK HERO | Rescue Missed Slice"
-            whyText = "Rescuing overdue slice for $subName (Lag: ${selectedSlice.slice.effectiveLagDays}d) to restore your streak and prevent compounding backlog."
+            whyText = "Rescuing overdue slice for $subName (Ch ${selectedSlice.chain.chapterNumber}, Lag: ${selectedSlice.slice.effectiveLagDays}d) to stop compounding backlog."
             nextText = "After this 25m sprint, proceed to today's core syllabus tasks."
         } else if (filteredT.isNotEmpty() && (isBatchExamCapped || filteredB.isEmpty() || telemetry.spinsTodayNormal <= telemetry.spinsBatchExam)) {
             // Pick TODAY_NORMAL: prioritize matching target category, then xpMultiplier
@@ -703,7 +845,7 @@ object GeminiRouletteService {
             val subName = getSubjectName(selectedSlice)
             val cat = getCognitiveCategory(selectedSlice)
             transitionTag = "📅 SYLLABUS MOMENTUM | Regular HSC Focus"
-            whyText = "Advancing core syllabus for $subName (${cat.label}) during peak circadian window to maintain steady daily pace."
+            whyText = "Advancing core syllabus for $subName Ch ${selectedSlice.chain.chapterNumber} (${cat.label}) during ${bdTime.bdCircadianPhase} to maintain steady daily pace."
             nextText = "Next, rotate to an analytical problem-solving sprint or private exam drill."
         } else if (filteredB.isNotEmpty() && !isBatchExamCapped) {
             // Pick BATCH_EXAM: prioritize closest exam deadline
@@ -716,7 +858,7 @@ object GeminiRouletteService {
             val days = matchingExam?.daysLeft(todayEpoch) ?: 0L
             val daysStr = if (days == 0L) "TODAY" else "in ${days}d"
             transitionTag = "📝 BATCH EXAM RADAR (${matchingExam?.formatSummary ?: "Target Drill"})"
-            whyText = "Targeted drill for $subName: upcoming ${matchingExam?.batchOrCoachingName ?: "coaching exam"} $daysStr (${matchingExam?.formatSummary ?: "MCQ/CQ"})."
+            whyText = "Targeted drill for $subName Ch ${selectedSlice.chain.chapterNumber}: upcoming ${matchingExam?.batchOrCoachingName ?: "coaching exam"} $daysStr (${matchingExam?.formatSummary ?: "MCQ/CQ"})."
             nextText = "After this sprint, transition to a regular syllabus slice to prevent cognitive fatigue."
         } else {
             // Fallback from general pool
@@ -725,7 +867,7 @@ object GeminiRouletteService {
                 ?: pool.first()
             val subName = getSubjectName(selectedSlice)
             transitionTag = "⚡ COGNITIVE REBOUND | Brain Channel Switch"
-            whyText = "Targeted $subName to balance cognitive load and maintain study rhythm."
+            whyText = "Targeted $subName Ch ${selectedSlice.chain.chapterNumber} to balance cognitive load and maintain study rhythm."
             nextText = "Next, we will rotate to a contrasting conceptual block."
         }
 
@@ -748,12 +890,25 @@ object GeminiRouletteService {
             "Bangladesh Circadian Engine (${bdTime.currentBdTimeFormatted}): Telemetry balanced across Comeback, Today Normal, and Exam buckets."
         }
 
+        val coach = buildDefaultCoachDiagnostics(
+            winner = selectedSlice,
+            totalCompletedToday = allTodayCompletedSlices.size,
+            totalPendingCount = candidateSlices.size,
+            comebackCount = cList.size,
+            userStreakDays = userStreakDays
+        )
+
         return AiRouletteRecommendation(
             selectedSliceId = selectedSlice.slice.sliceId,
             cognitiveTransitionTag = transitionTag,
             behaviorAnalysisNote = behaviorNote,
             whyThisTaskNow = whyText,
             nextRecommendedAfterThis = nextText,
+            coachStatusLevel = coach.statusLevel,
+            coachHeadline = coach.headline,
+            coachHonestComment = coach.honestComment,
+            lagConsequenceWarning = coach.consequenceWarning,
+            stepByStepSprintPlan = coach.sprintPlan,
             isOfflineFallback = true
         )
     }

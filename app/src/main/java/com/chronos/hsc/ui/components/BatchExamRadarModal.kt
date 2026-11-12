@@ -126,8 +126,9 @@ fun BatchExamFloatingButton(
     val view = LocalView.current
     val mostUrgent = activeExams.firstOrNull()
 
-    val baseBorderColor = if (isNature) NatureAutumnOrange else Color(0xFFE040FB)
-    val alertCrimson = if (isNature) NatureLagRust else Color(0xFFFF1744)
+    val baseBorderColor = if (isNature) NatureAutumnOrange else Color(0xFF52525B)
+    val baseTextColor = if (isNature) NatureAutumnOrange else Color(0xFFE4E4E7)
+    val alertCrimson = if (isNature) NatureLagRust else CyberCrimson
 
     val daysLeft = mostUrgent?.daysLeft(todayEpochDay) ?: 999L
     val isUrgent = mostUrgent != null && daysLeft <= 2L && mostUrgent.remainingStudyHours > 0f
@@ -147,7 +148,7 @@ fun BatchExamFloatingButton(
     val borderColor = if (isUrgent) {
         alertCrimson.copy(alpha = pulseAlpha)
     } else {
-        baseBorderColor.copy(alpha = 0.8f)
+        baseBorderColor.copy(alpha = 0.85f)
     }
 
     Surface(
@@ -157,7 +158,7 @@ fun BatchExamFloatingButton(
         },
         shape = RoundedCornerShape(16.dp),
         color = surfaceBg,
-        border = BorderStroke(if (isUrgent) 2.dp else 1.2.dp, borderColor),
+        border = BorderStroke(if (isUrgent) 1.8.dp else 1.dp, borderColor),
         shadowElevation = if (isUrgent) 8.dp else 4.dp,
         modifier = modifier
     ) {
@@ -174,7 +175,7 @@ fun BatchExamFloatingButton(
                 )
                 Text(
                     text = "+ Batch Exam",
-                    color = if (isNature) NatureAutumnOrange else Color(0xFFE040FB),
+                    color = baseTextColor,
                     fontWeight = FontWeight.Bold,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace
@@ -202,7 +203,7 @@ fun BatchExamFloatingButton(
                 ) {
                     Text(
                         text = line1,
-                        color = if (isUrgent) alertCrimson else if (isNature) NatureAutumnOrange else Color(0xFFE040FB),
+                        color = if (isUrgent) alertCrimson else baseTextColor,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
