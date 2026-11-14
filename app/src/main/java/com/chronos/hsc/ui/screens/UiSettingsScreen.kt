@@ -83,11 +83,231 @@ import com.chronos.hsc.ui.theme.ThemePreferences
 import com.chronos.hsc.ui.viewmodel.StudyViewModel
 
 @Composable
+private fun CloudSyncSettingsCard(
+    state: com.chronos.hsc.ui.viewmodel.StudyUiState,
+    isNature: Boolean,
+    surfaceColor: androidx.compose.ui.graphics.Color,
+    surfaceElevated: androidx.compose.ui.graphics.Color,
+    borderColor: androidx.compose.ui.graphics.Color,
+    accentColor: androidx.compose.ui.graphics.Color,
+    onSignInClick: () -> Unit,
+    onSyncNowClick: () -> Unit,
+    onSignOutClick: () -> Unit
+) {
+    val isSignedIn = state.cloudUserEmail != null
+    val isSyncing = state.cloudSyncStatus == com.chronos.hsc.data.sync.SyncStatus.SYNCING
+    val statusColor = when (state.cloudSyncStatus) {
+        com.chronos.hsc.data.sync.SyncStatus.SYNCED_LIVE -> com.chronos.hsc.ui.theme.CyberEmerald
+        com.chronos.hsc.data.sync.SyncStatus.SYNCING -> com.chronos.hsc.ui.theme.CyberAmber
+        com.chronos.hsc.data.sync.SyncStatus.SYNC_ERROR -> com.chronos.hsc.ui.theme.CyberCrimson
+        com.chronos.hsc.data.sync.SyncStatus.OFFLINE_LOCAL_ONLY -> com.chronos.hsc.ui.theme.TextMuted
+    }
+    val statusLabel = when (state.cloudSyncStatus) {
+        com.chronos.hsc.data.sync.SyncStatus.SYNCED_LIVE -> "LIVE"
+        com.chronos.hsc.data.sync.SyncStatus.SYNCING -> "SYNCING"
+        com.chronos.hsc.data.sync.SyncStatus.SYNC_ERROR -> "RETRY"
+        com.chronos.hsc.data.sync.SyncStatus.OFFLINE_LOCAL_ONLY -> "LOCAL"
+    }
+    val formattedLastSynced = androidx.compose.runtime.remember(state.lastSyncedTimestamp) {
+        state.lastSyncedTimestamp?.let { ts ->
+            val dt = java.time.Instant.ofEpochMilli(ts).atZone(java.time.ZoneId.systemDefault())
+            java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a").format(dt)
+        } ?: "Never synced yet"
+    }
+
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = surfaceColor,
+        border = androidx.compose.foundation.BorderStroke(
+            width = 1.dp,
+            color = if (isSignedIn) statusColor.copy(alpha = 0.45f) else borderColor
+        ),
+        modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+    ) {
+        androidx.compose.foundation.layout.Column(
+            modifier = androidx.compose.ui.Modifier.padding(14.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+        ) {
+            androidx.compose.foundation.layout.Row(
+                modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.Text(
+                    text = "☁️ CLOUD BACKUP & MULTI-DEVICE SYNC",
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                    fontSize = 12.sp,
+                    color = accentColor,
+                    modifier = androidx.compose.ui.Modifier.weight(1f)
+                )
+                androidx.compose.material3.Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    color = statusColor.copy(alpha = 0.16f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, statusColor.copy(alpha = 0.7f))
+                ) {
+                    androidx.compose.foundation.layout.Row(
+                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(5.dp)
+                    ) {
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier
+                                .size(6.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(statusColor)
+                        )
+                        androidx.compose.material3.Text(
+                            text = statusLabel,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                            fontSize = 9.sp,
+                            color = statusColor
+                        )
+                    }
+                }
+            }
+
+            if (!isSignedIn) {
+                androidx.compose.material3.Text(
+                    text = "Your study data is safely stored offline. Sign in with Google to upload your existing progress to Firebase first and sync live across devices without losing a single task.",
+                    fontSize = 12.sp,
+                    color = com.chronos.hsc.ui.theme.TextSecondary,
+                    lineHeight = 16.sp
+                )
+
+                if (state.cloudSyncStatus == com.chronos.hsc.data.sync.SyncStatus.SYNC_ERROR && !state.syncErrorMessage.isNullOrBlank()) {
+                    androidx.compose.material3.Text(
+                        text = "Sync Error: ${state.syncErrorMessage}",
+                        fontSize = 11.sp,
+                        color = com.chronos.hsc.ui.theme.CyberCrimson
+                    )
+                }
+
+                androidx.compose.material3.Button(
+                    onClick = onSignInClick,
+                    enabled = !isSyncing,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = accentColor,
+                        contentColor = androidx.compose.ui.graphics.Color(0xFF071014)
+                    ),
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                ) {
+                    if (isSyncing) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = androidx.compose.ui.Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = androidx.compose.ui.graphics.Color(0xFF071014)
+                        )
+                        androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(8.dp))
+                    }
+                    androidx.compose.material3.Text(
+                        text = if (isSyncing) "Connecting & Uploading Offline Data..." else "🔐 Sign in with Google & Upload Offline Data",
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                        fontSize = 12.sp
+                    )
+                }
+            } else {
+                androidx.compose.material3.Surface(
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    color = surfaceElevated,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = androidx.compose.ui.Modifier.padding(10.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = "Signed in as ${state.cloudUserEmail}",
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = com.chronos.hsc.ui.theme.TextPrimary
+                        )
+                        androidx.compose.material3.Text(
+                            text = if (isSyncing) "Syncing changes with Firestore..." else "Last synced: $formattedLastSynced • Auto-sync active",
+                            fontSize = 11.sp,
+                            color = if (state.cloudSyncStatus == com.chronos.hsc.data.sync.SyncStatus.SYNC_ERROR) {
+                                com.chronos.hsc.ui.theme.CyberCrimson
+                            } else {
+                                com.chronos.hsc.ui.theme.TextSecondary
+                            }
+                        )
+                        if (state.cloudSyncStatus == com.chronos.hsc.data.sync.SyncStatus.SYNC_ERROR && !state.syncErrorMessage.isNullOrBlank()) {
+                            androidx.compose.material3.Text(
+                                text = state.syncErrorMessage ?: "",
+                                fontSize = 10.sp,
+                                color = com.chronos.hsc.ui.theme.CyberCrimson
+                            )
+                        }
+                    }
+                }
+
+                androidx.compose.foundation.layout.Row(
+                    modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                ) {
+                    androidx.compose.material3.Button(
+                        onClick = onSyncNowClick,
+                        enabled = !isSyncing,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = accentColor,
+                            contentColor = androidx.compose.ui.graphics.Color(0xFF071014)
+                        ),
+                        modifier = androidx.compose.ui.Modifier.weight(1f)
+                    ) {
+                        if (isSyncing) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = androidx.compose.ui.Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = androidx.compose.ui.graphics.Color(0xFF071014)
+                            )
+                            androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(6.dp))
+                        }
+                        androidx.compose.material3.Text(
+                            text = if (isSyncing) "Syncing..." else "🔄 Sync Now",
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onSignOutClick,
+                        enabled = !isSyncing,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                        modifier = androidx.compose.ui.Modifier.weight(1f)
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = "Sign Out (Keep Local)",
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = com.chronos.hsc.ui.theme.TextSecondary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun UiSettingsScreen(
     preferences: ThemePreferences,
     viewModel: StudyViewModel
 ) {
     val haptic = LocalHapticFeedback.current
+    val settingsContext = androidx.compose.ui.platform.LocalContext.current
+    val uiState by viewModel.uiState.collectAsState()
+    val googleSignInLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        viewModel.handleGoogleSignInResult(result.data)
+    }
+
     val currentTheme by preferences.themeMode.collectAsState()
     val critterType by preferences.critterType.collectAsState()
     val foliageDensity by preferences.foliageDensity.collectAsState()
@@ -425,6 +645,33 @@ fun UiSettingsScreen(
                         )
                     }
                 }
+            }
+
+            // 4.5 Cloud Backup & Multi-Device Sync (Firebase)
+            item {
+                CloudSyncSettingsCard(
+                    state = uiState,
+                    isNature = isNature,
+                    surfaceColor = surfaceColor,
+                    surfaceElevated = surfaceElevated,
+                    borderColor = borderColor,
+                    accentColor = accentColor,
+                    onSignInClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        val signInIntent = viewModel.getGoogleSignInIntent(settingsContext)
+                        if (signInIntent != null) {
+                            googleSignInLauncher.launch(signInIntent)
+                        }
+                    },
+                    onSyncNowClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.syncCloudNow()
+                    },
+                    onSignOutClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.signOutKeepLocalData(settingsContext)
+                    }
+                )
             }
 
             // 5. Instant Catch-Up Engine Card

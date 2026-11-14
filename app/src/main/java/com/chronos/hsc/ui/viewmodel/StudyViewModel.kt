@@ -20,6 +20,8 @@ import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.BatchExamRecord
 import com.chronos.hsc.data.store.BatchExamStore
 import com.chronos.hsc.data.store.WorkloadBucket
+import com.chronos.hsc.data.sync.FirebaseSyncManager
+import com.chronos.hsc.data.sync.SyncStatus
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.HeatmapDayCell
 import com.chronos.hsc.domain.NeuroTelemetrySummary
@@ -35,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -42,6 +45,7 @@ import java.time.LocalDate
 
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import com.chronos.hsc.notification.ChronosWorkScheduler
 
@@ -93,7 +97,11 @@ data class StudyUiState(
     val sprintTimerState: SprintTimerState? = null,
     val isBatchExamModalOpen: Boolean = false,
     val activeBatchExams: List<BatchExamRecord> = emptyList(),
-    val todaySlices: List<SliceWithParentChain> = emptyList()
+    val todaySlices: List<SliceWithParentChain> = emptyList(),
+    val cloudUserEmail: String? = null,
+    val cloudSyncStatus: SyncStatus = SyncStatus.OFFLINE_LOCAL_ONLY,
+    val lastSyncedTimestamp: Long? = null,
+    val syncErrorMessage: String? = null
 ) {
     val rouletteCandidatePool: List<SliceWithParentChain>
         get() = (overdueSlices + todaySlices + rawDateSlices)
@@ -117,7 +125,8 @@ private data class ModalControlState(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class StudyViewModel(
-    private val repository: StudyRepository
+    private val repository: StudyRepository,
+    private val firebaseSyncManager: FirebaseSyncManager? = FirebaseSyncManager.getInstanceIfInitialized()
 ) : ViewModel() {
 
     private val todayEpochDay = LocalDate.now().toEpochDay()
@@ -191,13 +200,34 @@ class StudyViewModel(
         )
     }
 
+    private val cloudSyncStateFlow = combine(
+        firebaseSyncManager?.currentUserEmail ?: flowOf(null),
+        firebaseSyncManager?.syncStatus ?: flowOf(SyncStatus.OFFLINE_LOCAL_ONLY),
+        firebaseSyncManager?.lastSyncedTimestamp ?: flowOf(null),
+        firebaseSyncManager?.syncErrorMessage ?: flowOf(null)
+    ) { email, status, lastSynced, errorMsg ->
+        CloudSyncStateBundle(
+            userEmail = email,
+            syncStatus = status,
+            lastSyncedTimestamp = lastSynced,
+            syncErrorMessage = errorMsg
+        )
+    }
+
+    private val externalStoresFlow = combine(
+        BatchExamStore.batchExamsFlow,
+        cloudSyncStateFlow
+    ) { batchExams, cloudSync ->
+        batchExams to cloudSync
+    }
+
     val uiState: StateFlow<StudyUiState> = combine(
         coreDataFlow,
         analyticsAndChainsFlow,
         examAndNeuroFlow,
         modalControlFlow,
-        BatchExamStore.batchExamsFlow
-    ) { core, analytics, examAndNeuro, modals, batchExams ->
+        externalStoresFlow
+    ) { core, analytics, examAndNeuro, modals, (batchExams, cloudSync) ->
         val (visible, hidden) = filterAndSortByBatteryMode(
             slices = core.dateSlices,
             batteryMode = core.batteryMode
@@ -237,7 +267,11 @@ class StudyViewModel(
             sprintTimerState = modals.sprintTimerState,
             isBatchExamModalOpen = modals.isBatchExamModalOpen,
             activeBatchExams = activeExams,
-            todaySlices = core.todaySlices
+            todaySlices = core.todaySlices,
+            cloudUserEmail = cloudSync.userEmail,
+            cloudSyncStatus = cloudSync.syncStatus,
+            lastSyncedTimestamp = cloudSync.lastSyncedTimestamp,
+            syncErrorMessage = cloudSync.syncErrorMessage
         )
     }.stateIn(
         scope = viewModelScope,
@@ -873,6 +907,48 @@ class StudyViewModel(
         ChronosWorkScheduler.scheduleDominoAlerts(context, enabled, forceUpdate = true)
     }
 
+    // =========================================================================
+    // FIREBASE GOOGLE SIGN-IN & REAL-TIME CLOUD SYNC
+    // =========================================================================
+
+    fun getGoogleSignInIntent(context: Context): Intent? {
+        return firebaseSyncManager?.getGoogleSignInIntent(context)
+    }
+
+    fun handleGoogleSignInResult(intent: Intent?) {
+        val manager = firebaseSyncManager
+        if (manager == null) {
+            emitSnackbar("Cloud sync service unavailable on this context.")
+            return
+        }
+        manager.handleSignInResult(intent) { _, message ->
+            emitSnackbar(message)
+        }
+    }
+
+    fun syncCloudNow() {
+        val manager = firebaseSyncManager
+        if (manager == null) {
+            emitSnackbar("Cloud sync service unavailable.")
+            return
+        }
+        manager.syncNow { _, message ->
+            emitSnackbar(message)
+        }
+    }
+
+    fun signOutKeepLocalData(context: Context) {
+        firebaseSyncManager?.signOutKeepLocalData(context) {
+            emitSnackbar("Signed out of Cloud Sync. All offline study data kept intact!")
+        }
+    }
+
+    private fun emitSnackbar(message: String) {
+        viewModelScope.launch {
+            _events.emit(StudyUiEvent.ShowSnackbar(message = message))
+        }
+    }
+
     private data class DateSlicesBundle(
         val selectedDateEpochDay: Long,
         val dateSlices: List<SliceWithParentChain>,
@@ -902,12 +978,25 @@ class StudyViewModel(
         val neuroTelemetry: NeuroTelemetrySummary
     )
 
+    private data class CloudSyncStateBundle(
+        val userEmail: String? = null,
+        val syncStatus: SyncStatus = SyncStatus.OFFLINE_LOCAL_ONLY,
+        val lastSyncedTimestamp: Long? = null,
+        val syncErrorMessage: String? = null
+    )
+
     companion object {
-        fun provideFactory(repository: StudyRepository): ViewModelProvider.Factory =
+        fun provideFactory(
+            repository: StudyRepository,
+            firebaseSyncManager: FirebaseSyncManager? = null
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return StudyViewModel(repository) as T
+                    return StudyViewModel(
+                        repository = repository,
+                        firebaseSyncManager = firebaseSyncManager ?: FirebaseSyncManager.getInstanceIfInitialized()
+                    ) as T
                 }
             }
     }

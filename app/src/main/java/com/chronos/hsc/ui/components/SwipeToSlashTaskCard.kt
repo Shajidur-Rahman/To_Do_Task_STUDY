@@ -41,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -133,10 +134,15 @@ fun SwipeToSlashTaskCard(
 ) {
     val slice = item.slice
     val chain = item.chain
-    val effectiveBatchExam = matchingBatchExam ?: remember(chain.chainId, todayEpochDay) {
+    val batchExams by BatchExamStore.batchExamsFlow.collectAsState()
+    val effectiveBatchExam = matchingBatchExam ?: remember(chain.chainId, todayEpochDay, batchExams) {
         BatchExamStore.findMatchingActiveExam(item, todayEpochDay)
     }
-    val customSub = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+    val chainLinks by CustomSubjectAndAiStore.chainLinksFlow.collectAsState()
+    val customSubjects by CustomSubjectAndAiStore.customSubjectsFlow.collectAsState()
+    val customSub = remember(chain.chainId, chainLinks, customSubjects) {
+        CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId)
+    }
     val subjectColor = if (customSub != null) {
         Color(customSub.colorHex).harmonizeForBlackUi()
     } else {

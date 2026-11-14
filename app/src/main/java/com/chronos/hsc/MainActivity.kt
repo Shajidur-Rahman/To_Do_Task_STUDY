@@ -28,7 +28,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             ChronosHscTheme {
                 val studyViewModel: StudyViewModel = viewModel(
-                    factory = StudyViewModel.provideFactory(appContainer.studyRepository)
+                    factory = StudyViewModel.provideFactory(
+                        repository = appContainer.studyRepository,
+                        firebaseSyncManager = appContainer.firebaseSyncManager
+                    )
                 )
                 val updateViewModel: UpdateViewModel = viewModel()
                 val updateManager = updateViewModel.updateManager

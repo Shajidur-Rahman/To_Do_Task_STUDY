@@ -5,6 +5,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+    id("com.google.gms.google-services")
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -32,8 +33,8 @@ android {
         applicationId = "com.chronos.hsc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "1.3.9"
+        versionCode = 19
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -116,6 +117,13 @@ dependencies {
 
     // Android WorkManager for Background Study Briefings & Domino Alerts
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Firebase Auth, Cloud Firestore & Google Sign-In
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 }
 
 tasks.register("copyReleaseApk") {

@@ -170,6 +170,12 @@ object BatchExamStore {
     private val _batchExamsFlow = MutableStateFlow<List<BatchExamRecord>>(emptyList())
     val batchExamsFlow: StateFlow<List<BatchExamRecord>> = _batchExamsFlow.asStateFlow()
 
+    @Volatile
+    var onLocalMutation: (() -> Unit)? = null
+
+    @Volatile
+    var onLocalExamDeleted: ((String) -> Unit)? = null
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -186,32 +192,48 @@ object BatchExamStore {
             return
         }
 
-        try {
+        _batchExamsFlow.value = parseJsonArray(rawJson)
+    }
+
+    fun parseJsonArray(rawJson: String?): List<BatchExamRecord> {
+        if (rawJson.isNullOrBlank()) return emptyList()
+        return try {
             val jsonArray = JSONArray(rawJson)
             val list = mutableListOf<BatchExamRecord>()
             for (i in 0 until jsonArray.length()) {
-                val item = BatchExamRecord.fromJson(jsonArray.getJSONObject(i))
-                list.add(item)
+                list.add(BatchExamRecord.fromJson(jsonArray.getJSONObject(i)))
             }
-            _batchExamsFlow.value = list
+            list
         } catch (_: Exception) {
-            _batchExamsFlow.value = emptyList()
+            emptyList()
+        }
+    }
+
+    fun exportToJsonString(list: List<BatchExamRecord> = _batchExamsFlow.value): String {
+        val jsonArray = JSONArray()
+        for (record in list) {
+            jsonArray.put(record.toJson())
+        }
+        return jsonArray.toString()
+    }
+
+    @Synchronized
+    private fun saveToStorage(list: List<BatchExamRecord>, notifyCloud: Boolean = true) {
+        val sp = prefs ?: return
+        try {
+            sp.edit().putString(KEY_BATCH_EXAMS, exportToJsonString(list)).apply()
+            _batchExamsFlow.value = list
+            if (notifyCloud) {
+                onLocalMutation?.invoke()
+            }
+        } catch (_: Exception) {
+            // Safe fallback
         }
     }
 
     @Synchronized
-    private fun saveToStorage(list: List<BatchExamRecord>) {
-        val sp = prefs ?: return
-        try {
-            val jsonArray = JSONArray()
-            for (record in list) {
-                jsonArray.put(record.toJson())
-            }
-            sp.edit().putString(KEY_BATCH_EXAMS, jsonArray.toString()).apply()
-            _batchExamsFlow.value = list
-        } catch (_: Exception) {
-            // Safe fallback
-        }
+    fun replaceAllFromSync(list: List<BatchExamRecord>) {
+        saveToStorage(list, notifyCloud = false)
     }
 
     @Synchronized
@@ -238,6 +260,7 @@ object BatchExamStore {
     fun deleteBatchExam(examId: String) {
         val current = _batchExamsFlow.value.toMutableList()
         current.removeAll { it.examId == examId }
+        onLocalExamDeleted?.invoke(examId)
         saveToStorage(current)
     }
 

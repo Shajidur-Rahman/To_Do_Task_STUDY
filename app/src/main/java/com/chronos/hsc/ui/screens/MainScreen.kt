@@ -96,6 +96,7 @@ import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.notification.ChronosNotificationHelper
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
+import com.chronos.hsc.data.sync.SyncStatus
 import com.chronos.hsc.ui.components.AccountabilityCardModal
 import com.chronos.hsc.ui.components.AddHscTopicModal
 import com.chronos.hsc.ui.components.BatchExamFloatingButton
@@ -324,7 +325,10 @@ fun MainScreen(
                         onRequestDeleteSlice = viewModel::requestDeleteForSlice,
                         onConvertHiddenToLightReview = viewModel::convertHiddenSliceToLightReview,
                         onCatchUpSlice = viewModel::catchUpSliceToToday,
-                        onInstantCatchUpAll = viewModel::instantCatchUpAllLaggingChains
+                        onInstantCatchUpAll = viewModel::instantCatchUpAllLaggingChains,
+                        onOpenCloudSync = {
+                            selectedTabIndex = ChronosTab.UI_SETTINGS.ordinal
+                        }
                     )
 
                     ChronosTab.SYLLABUS_BOSSES -> ActiveChainsTab(
@@ -595,7 +599,8 @@ private fun TodayBattlegroundTab(
     onRequestDeleteSlice: (SliceWithParentChain) -> Unit,
     onConvertHiddenToLightReview: (String) -> Unit,
     onCatchUpSlice: (String) -> Unit = {},
-    onInstantCatchUpAll: () -> Unit = {}
+    onInstantCatchUpAll: () -> Unit = {},
+    onOpenCloudSync: () -> Unit = {}
 ) {
     var isZombieHiddenExpanded by remember { mutableStateOf(false) }
     var isToolsDeckExpanded by rememberSaveable { mutableStateOf(false) }
@@ -632,7 +637,10 @@ private fun TodayBattlegroundTab(
                                 }
                                 onSelectBatteryMode(nextMode)
                             },
-                            onOpenUpdate = onOpenUpdate
+                            onOpenUpdate = onOpenUpdate,
+                            cloudUserEmail = state.cloudUserEmail,
+                            cloudSyncStatus = state.cloudSyncStatus,
+                            onOpenCloudSync = onOpenCloudSync
                         )
 
                         AnimatedVisibility(visible = isToolsDeckExpanded) {
@@ -655,7 +663,10 @@ private fun TodayBattlegroundTab(
                         onOpenNeuroGymQuickRescue = onOpenNeuroGymQuickRescue,
                         onOpenAccountability = onOpenAccountability,
                         isUpdateAvailable = isUpdateAvailable,
-                        onOpenUpdate = onOpenUpdate
+                        onOpenUpdate = onOpenUpdate,
+                        cloudUserEmail = state.cloudUserEmail,
+                        cloudSyncStatus = state.cloudSyncStatus,
+                        onOpenCloudSync = onOpenCloudSync
                     )
                 }
             }
@@ -838,7 +849,10 @@ private fun CompactTopHudBar(
     isNature: Boolean,
     onToggleTools: () -> Unit,
     onCycleBatteryMode: () -> Unit,
-    onOpenUpdate: () -> Unit
+    onOpenUpdate: () -> Unit,
+    cloudUserEmail: String? = null,
+    cloudSyncStatus: SyncStatus = SyncStatus.OFFLINE_LOCAL_ONLY,
+    onOpenCloudSync: () -> Unit = {}
 ) {
     val primaryColor = if (isNature) NatureLeafGreen else Color.White
     val secondaryColor = if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
@@ -967,11 +981,42 @@ private fun CompactTopHudBar(
                 }
             }
 
-            // Right: Update Pill (if available) + Tools Toggle Chip
+            // Right: Cloud Sync Dot + Update Pill (if available) + Tools Toggle Chip
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                val syncDotColor = when (cloudSyncStatus) {
+                    SyncStatus.SYNCED_LIVE -> CyberEmerald
+                    SyncStatus.SYNCING -> CyberAmber
+                    SyncStatus.SYNC_ERROR -> CyberCrimson
+                    SyncStatus.OFFLINE_LOCAL_ONLY -> if (isNature) secondaryColor else Color(0xFF71717A)
+                }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (cloudUserEmail != null) syncDotColor.copy(alpha = 0.16f) else (if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated),
+                    border = BorderStroke(1.dp, if (cloudUserEmail != null) syncDotColor.copy(alpha = 0.65f) else borderCol),
+                    modifier = Modifier.clickable { onOpenCloudSync() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(syncDotColor)
+                        )
+                        Text(
+                            text = "☁",
+                            fontSize = 9.sp,
+                            color = if (cloudUserEmail != null) syncDotColor else TextMuted
+                        )
+                    }
+                }
+
                 if (isUpdateAvailable) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -1151,7 +1196,10 @@ private fun BattlegroundTopHeader(
     onOpenNeuroGymQuickRescue: () -> Unit,
     onOpenAccountability: () -> Unit,
     isUpdateAvailable: Boolean = false,
-    onOpenUpdate: () -> Unit = {}
+    onOpenUpdate: () -> Unit = {},
+    cloudUserEmail: String? = null,
+    cloudSyncStatus: SyncStatus = SyncStatus.OFFLINE_LOCAL_ONLY,
+    onOpenCloudSync: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -1193,6 +1241,43 @@ private fun BattlegroundTopHeader(
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 11.sp,
                             color = Color(0xFFF3C6FF)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val syncColor = when (cloudSyncStatus) {
+                        SyncStatus.SYNCED_LIVE -> CyberEmerald
+                        SyncStatus.SYNCING -> CyberAmber
+                        SyncStatus.SYNC_ERROR -> CyberCrimson
+                        SyncStatus.OFFLINE_LOCAL_ONLY -> TextMuted
+                    }
+                    val syncLabel = when (cloudSyncStatus) {
+                        SyncStatus.SYNCED_LIVE -> "☁ Live"
+                        SyncStatus.SYNCING -> "☁ Sync"
+                        SyncStatus.SYNC_ERROR -> "☁ Err"
+                        SyncStatus.OFFLINE_LOCAL_ONLY -> "☁ Local"
+                    }
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(syncColor.copy(alpha = 0.14f))
+                            .border(1.dp, syncColor.copy(alpha = 0.65f), RoundedCornerShape(6.dp))
+                            .clickable { onOpenCloudSync() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(syncColor)
+                        )
+                        Text(
+                            text = syncLabel,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            color = syncColor
                         )
                     }
                 }
@@ -1812,6 +1897,8 @@ private fun ActiveBossesMiniCarousel(
     activeChains: List<TopicChainWithSlices>
 ) {
     val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
+    val chainLinks by CustomSubjectAndAiStore.chainLinksFlow.collectAsState()
+    val customSubjects by CustomSubjectAndAiStore.customSubjectsFlow.collectAsState()
     Column {
         Text(
             text = "⚔️ ACTIVE SYLLABUS BOSSES (${activeChains.size})",
@@ -1829,7 +1916,9 @@ private fun ActiveBossesMiniCarousel(
                 key = { it.chain.chainId }
             ) { chainWithSlices ->
                 val chain = chainWithSlices.chain
-                val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+                val customLink = remember(chain.chainId, chainLinks, customSubjects) {
+                    CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId)
+                }
                 val sColor = if (customLink != null) {
                     Color(customLink.colorHex).harmonizeForBlackUi()
                 } else {
@@ -2013,6 +2102,8 @@ private fun ActiveChainsTab(
 ) {
     val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val dateFormatter = remember { DateTimeFormatter.ofPattern("MMM d") }
+    val chainLinks by CustomSubjectAndAiStore.chainLinksFlow.collectAsState()
+    val customSubjects by CustomSubjectAndAiStore.customSubjectsFlow.collectAsState()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -2091,7 +2182,9 @@ private fun ActiveChainsTab(
                 key = { it.chain.chainId }
             ) { item ->
                 val chain = item.chain
-                val customLink = remember(chain.chainId) { CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId) }
+                val customLink = remember(chain.chainId, chainLinks, customSubjects) {
+                    CustomSubjectAndAiStore.getCustomSubjectForChain(chain.chainId)
+                }
                 val subjectColor = if (customLink != null) {
                     Color(customLink.colorHex).harmonizeForBlackUi()
                 } else {

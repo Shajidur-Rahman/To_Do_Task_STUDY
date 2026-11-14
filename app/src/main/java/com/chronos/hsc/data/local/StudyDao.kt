@@ -255,4 +255,101 @@ interface StudyDao {
         if (exams.isNotEmpty()) insertAllExams(exams)
         if (neuroSessions.isNotEmpty()) insertAllNeuroSessions(neuroSessions)
     }
+
+    // =========================================================================
+    // NON-DESTRUCTIVE CLOUD SYNC SNAPSHOT READERS & SAFE UPSERT WRITERS
+    // =========================================================================
+
+    @Query("SELECT * FROM study_topic_chains")
+    suspend fun getAllChainsSnapshot(): List<StudyTopicChain>
+
+    @Query("SELECT * FROM daily_task_slices")
+    suspend fun getAllSlicesSnapshot(): List<DailyTaskSlice>
+
+    @Query("SELECT * FROM user_stats WHERE id = 1 LIMIT 1")
+    suspend fun getUserStatsSnapshot(): UserStats?
+
+    @Query("SELECT * FROM exam_countdowns")
+    suspend fun getAllExamCountdownsSnapshot(): List<ExamCountdownEntity>
+
+    @Query("SELECT * FROM neuro_sessions")
+    suspend fun getAllNeuroSessionsSnapshot(): List<NeuroSessionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertChainsIgnore(chains: List<StudyTopicChain>): List<Long>
+
+    @Update
+    suspend fun updateChains(chains: List<StudyTopicChain>)
+
+    /**
+     * Non-destructive chain upsert: inserts new chains and updates existing ones in place
+     * so ForeignKey(onDelete = CASCADE) never wipes child DailyTaskSlice rows.
+     */
+    @Transaction
+    suspend fun upsertChains(chains: List<StudyTopicChain>) {
+        if (chains.isEmpty()) return
+        val results = insertChainsIgnore(chains)
+        val existingToUpdate = chains.filterIndexed { index, _ -> results.getOrNull(index) == -1L }
+        if (existingToUpdate.isNotEmpty()) {
+            updateChains(existingToUpdate)
+        }
+    }
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSlices(slices: List<DailyTaskSlice>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertExamCountdowns(exams: List<ExamCountdownEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNeuroSessions(sessions: List<NeuroSessionEntity>)
+
+    @Transaction
+    suspend fun applyCloudMerge(
+        chainsToUpsert: List<StudyTopicChain>,
+        slicesToUpsert: List<DailyTaskSlice>,
+        statsToUpsert: UserStats?,
+        examsToUpsert: List<ExamCountdownEntity>,
+        neuroSessionsToUpsert: List<NeuroSessionEntity>,
+        tombstonedChainIds: Set<String>,
+        tombstonedSliceIds: Set<String>,
+        tombstonedExamIds: Set<String>
+    ) {
+        for (chainId in tombstonedChainIds) {
+            deleteTopicChainById(chainId)
+        }
+        for (sliceId in tombstonedSliceIds) {
+            deleteSliceById(sliceId)
+        }
+        for (examId in tombstonedExamIds) {
+            deleteExam(examId)
+        }
+
+        if (chainsToUpsert.isNotEmpty()) {
+            upsertChains(chainsToUpsert)
+        }
+        if (slicesToUpsert.isNotEmpty()) {
+            val validChainIds = getAllChainsSnapshot().map { it.chainId }.toHashSet()
+            val safeSlices = slicesToUpsert.filter {
+                it.chainId in validChainIds &&
+                    it.chainId !in tombstonedChainIds &&
+                    it.sliceId !in tombstonedSliceIds
+            }
+            if (safeSlices.isNotEmpty()) {
+                upsertSlices(safeSlices)
+            }
+        }
+        if (statsToUpsert != null) {
+            upsertUserStats(statsToUpsert)
+        }
+        if (examsToUpsert.isNotEmpty()) {
+            val safeExams = examsToUpsert.filter { it.examId !in tombstonedExamIds }
+            if (safeExams.isNotEmpty()) {
+                upsertExamCountdowns(safeExams)
+            }
+        }
+        if (neuroSessionsToUpsert.isNotEmpty()) {
+            upsertNeuroSessions(neuroSessionsToUpsert)
+        }
+    }
 }

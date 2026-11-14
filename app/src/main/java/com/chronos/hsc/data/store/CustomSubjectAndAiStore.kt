@@ -3,6 +3,9 @@ package com.chronos.hsc.data.store
 import android.content.Context
 import android.content.SharedPreferences
 import com.chronos.hsc.data.local.HscSubject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -157,9 +160,23 @@ object CustomSubjectAndAiStore {
     private var prefs: SharedPreferences? = null
     private val rejectedSliceIdsSession = mutableSetOf<String>()
 
+    private val _customSubjectsFlow = MutableStateFlow<List<CustomSubject>>(emptyList())
+    val customSubjectsFlow: StateFlow<List<CustomSubject>> = _customSubjectsFlow.asStateFlow()
+
+    private val _chainLinksFlow = MutableStateFlow<Map<String, CustomSubjectLink>>(emptyMap())
+    val chainLinksFlow: StateFlow<Map<String, CustomSubjectLink>> = _chainLinksFlow.asStateFlow()
+
+    @Volatile
+    var onLocalMutation: (() -> Unit)? = null
+
+    @Volatile
+    var onLocalCustomSubjectDeleted: ((String) -> Unit)? = null
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            _customSubjectsFlow.value = getCustomSubjects()
+            _chainLinksFlow.value = getAllChainLinks()
         }
     }
 
@@ -171,9 +188,8 @@ object CustomSubjectAndAiStore {
     // CUSTOM SUBJECTS CRUD
     // =========================================================================
 
-    @Synchronized
-    fun getCustomSubjects(): List<CustomSubject> {
-        val raw = getPrefs().getString(KEY_CUSTOM_SUBJECTS, null) ?: return emptyList()
+    fun parseCustomSubjectsJson(raw: String?): List<CustomSubject> {
+        if (raw.isNullOrBlank()) return emptyList()
         val list = mutableListOf<CustomSubject>()
         try {
             val array = JSONArray(raw)
@@ -199,25 +215,7 @@ object CustomSubjectAndAiStore {
         return list
     }
 
-    @Synchronized
-    fun saveCustomSubject(subject: CustomSubject) {
-        val current = getCustomSubjects().toMutableList()
-        val existingIndex = current.indexOfFirst { it.id == subject.id }
-        if (existingIndex >= 0) {
-            current[existingIndex] = subject
-        } else {
-            current.add(subject)
-        }
-        persistCustomSubjects(current)
-    }
-
-    @Synchronized
-    fun deleteCustomSubject(id: String) {
-        val current = getCustomSubjects().filter { it.id != id }
-        persistCustomSubjects(current)
-    }
-
-    private fun persistCustomSubjects(list: List<CustomSubject>) {
+    fun exportCustomSubjectsJson(list: List<CustomSubject> = getCustomSubjects()): String {
         val array = JSONArray()
         for (item in list) {
             val obj = JSONObject().apply {
@@ -231,22 +229,54 @@ object CustomSubjectAndAiStore {
             }
             array.put(obj)
         }
-        getPrefs().edit().putString(KEY_CUSTOM_SUBJECTS, array.toString()).apply()
+        return array.toString()
+    }
+
+    @Synchronized
+    fun getCustomSubjects(): List<CustomSubject> {
+        val raw = prefs?.getString(KEY_CUSTOM_SUBJECTS, null) ?: return emptyList()
+        return parseCustomSubjectsJson(raw)
+    }
+
+    @Synchronized
+    fun saveCustomSubject(subject: CustomSubject) {
+        val current = getCustomSubjects().toMutableList()
+        val existingIndex = current.indexOfFirst { it.id == subject.id }
+        if (existingIndex >= 0) {
+            current[existingIndex] = subject
+        } else {
+            current.add(subject)
+        }
+        persistCustomSubjects(current, notifyCloud = true)
+    }
+
+    @Synchronized
+    fun deleteCustomSubject(id: String) {
+        val current = getCustomSubjects().filter { it.id != id }
+        onLocalCustomSubjectDeleted?.invoke(id)
+        persistCustomSubjects(current, notifyCloud = true)
+    }
+
+    @Synchronized
+    fun replaceAllCustomSubjectsFromSync(list: List<CustomSubject>) {
+        persistCustomSubjects(list, notifyCloud = false)
+    }
+
+    private fun persistCustomSubjects(list: List<CustomSubject>, notifyCloud: Boolean = true) {
+        val json = exportCustomSubjectsJson(list)
+        getPrefs().edit().putString(KEY_CUSTOM_SUBJECTS, json).apply()
+        _customSubjectsFlow.value = list
+        if (notifyCloud) {
+            onLocalMutation?.invoke()
+        }
     }
 
     // =========================================================================
     // CHAIN ID -> CUSTOM SUBJECT LINKS
     // =========================================================================
 
-    @Synchronized
-    fun getCustomSubjectForChain(chainId: String): CustomSubjectLink? {
-        val links = getAllChainLinks()
-        return links[chainId]
-    }
-
-    @Synchronized
-    fun getAllChainLinks(): Map<String, CustomSubjectLink> {
-        val raw = getPrefs().getString(KEY_CHAIN_LINKS, null) ?: return emptyMap()
+    fun parseChainLinksJson(raw: String?): Map<String, CustomSubjectLink> {
+        if (raw.isNullOrBlank()) return emptyMap()
         val map = mutableMapOf<String, CustomSubjectLink>()
         try {
             val obj = JSONObject(raw)
@@ -270,6 +300,34 @@ object CustomSubjectAndAiStore {
         return map
     }
 
+    fun exportChainLinksJson(map: Map<String, CustomSubjectLink> = getAllChainLinks()): String {
+        val root = JSONObject()
+        for ((chainId, link) in map) {
+            val item = JSONObject().apply {
+                put("customSubjectId", link.customSubjectId)
+                put("customSubjectName", link.customSubjectName)
+                put("customShortCode", link.customShortCode)
+                put("customColorHex", link.customColorHex)
+                put("cognitiveCategory", link.cognitiveCategory.name)
+                put("isSinglePaperOnly", link.isSinglePaperOnly)
+            }
+            root.put(chainId, item)
+        }
+        return root.toString()
+    }
+
+    @Synchronized
+    fun getCustomSubjectForChain(chainId: String): CustomSubjectLink? {
+        val links = getAllChainLinks()
+        return links[chainId]
+    }
+
+    @Synchronized
+    fun getAllChainLinks(): Map<String, CustomSubjectLink> {
+        val raw = prefs?.getString(KEY_CHAIN_LINKS, null) ?: return emptyMap()
+        return parseChainLinksJson(raw)
+    }
+
     fun getCustomSubject(id: String): CustomSubject? = getCustomSubjects().find { it.id == id }
 
     @Synchronized
@@ -284,7 +342,7 @@ object CustomSubjectAndAiStore {
             cognitiveCategory = subject.cognitiveCategory,
             isSinglePaperOnly = subject.isSinglePaperOnly
         )
-        persistChainLinks(links)
+        persistChainLinks(links, notifyCloud = true)
     }
 
     @Synchronized
@@ -297,24 +355,22 @@ object CustomSubjectAndAiStore {
     fun removeChainLink(chainId: String) {
         val links = getAllChainLinks().toMutableMap()
         if (links.remove(chainId) != null) {
-            persistChainLinks(links)
+            persistChainLinks(links, notifyCloud = true)
         }
     }
 
-    private fun persistChainLinks(map: Map<String, CustomSubjectLink>) {
-        val root = JSONObject()
-        for ((chainId, link) in map) {
-            val item = JSONObject().apply {
-                put("customSubjectId", link.customSubjectId)
-                put("customSubjectName", link.customSubjectName)
-                put("customShortCode", link.customShortCode)
-                put("customColorHex", link.customColorHex)
-                put("cognitiveCategory", link.cognitiveCategory.name)
-                put("isSinglePaperOnly", link.isSinglePaperOnly)
-            }
-            root.put(chainId, item)
+    @Synchronized
+    fun replaceAllChainLinksFromSync(map: Map<String, CustomSubjectLink>) {
+        persistChainLinks(map, notifyCloud = false)
+    }
+
+    private fun persistChainLinks(map: Map<String, CustomSubjectLink>, notifyCloud: Boolean = true) {
+        val json = exportChainLinksJson(map)
+        getPrefs().edit().putString(KEY_CHAIN_LINKS, json).apply()
+        _chainLinksFlow.value = map
+        if (notifyCloud) {
+            onLocalMutation?.invoke()
         }
-        getPrefs().edit().putString(KEY_CHAIN_LINKS, root.toString()).apply()
     }
 
     @Synchronized

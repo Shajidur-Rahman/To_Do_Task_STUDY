@@ -19,6 +19,7 @@ import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.BatchExamRecord
+import com.chronos.hsc.data.sync.FirebaseSyncManager
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.DominoShiftResult
 import com.chronos.hsc.domain.HeatmapDayCell
@@ -28,6 +29,7 @@ import com.chronos.hsc.domain.SubjectAnalyticsSummary
 import com.chronos.hsc.widget.ChronosWidgetUpdater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -41,8 +43,12 @@ import kotlin.math.roundToInt
 
 class StudyRepository(
     private val dao: StudyDao,
-    private val appContext: Context
+    private val appContext: Context,
+    private val firebaseSyncManager: FirebaseSyncManager? = null
 ) {
+
+    private fun syncMgr(): FirebaseSyncManager? =
+        firebaseSyncManager ?: FirebaseSyncManager.getInstanceIfInitialized()
 
     fun observeAllChainsWithSlices(): Flow<List<TopicChainWithSlices>> =
         dao.observeAllChainsWithSlices()
@@ -104,7 +110,11 @@ class StudyRepository(
      * Aggregates subject analytics across all chains and slices.
      */
     fun observeSubjectAnalytics(): Flow<List<SubjectAnalyticsSummary>> {
-        return dao.observeAllChainsWithSlices().map { chainsWithSlices ->
+        return combine(
+            dao.observeAllChainsWithSlices(),
+            CustomSubjectAndAiStore.customSubjectsFlow,
+            CustomSubjectAndAiStore.chainLinksFlow
+        ) { chainsWithSlices, customSubjects, _ ->
             val standardList = HscSubject.entries.map { subject ->
                 val subjectChains = chainsWithSlices.filter {
                     it.chain.subject == subject && CustomSubjectAndAiStore.getCustomSubjectForChain(it.chain.chainId) == null
@@ -118,7 +128,6 @@ class StudyRepository(
                     activeChainsCount = subjectChains.count { !it.chain.isChainCompleted }
                 )
             }
-            val customSubjects = CustomSubjectAndAiStore.getCustomSubjects()
             val customList = customSubjects.map { cs ->
                 val csChains = chainsWithSlices.filter {
                     CustomSubjectAndAiStore.getCustomSubjectForChain(it.chain.chainId)?.id == cs.id
@@ -200,11 +209,13 @@ class StudyRepository(
             isPrimaryPinned = true
         )
         dao.upsertAndPinExam(exam)
+        syncMgr()?.scheduleCloudPush()
         return exam
     }
 
     suspend fun pinExam(examId: String) {
         dao.pinExistingExam(examId)
+        syncMgr()?.scheduleCloudPush()
     }
 
     suspend fun deleteExam(examId: String) {
@@ -213,6 +224,8 @@ class StudyRepository(
         if (remaining.isNotEmpty() && remaining.none { it.isPrimaryPinned }) {
             dao.pinExistingExam(remaining.first().examId)
         }
+        syncMgr()?.recordDeletedExamCountdownTombstone(examId)
+        syncMgr()?.scheduleCloudPush()
     }
 
     // =========================================================================
@@ -234,6 +247,7 @@ class StudyRepository(
         dao.insertNeuroSession(session)
         val xpAwarded = 25
         awardXp(xpAwarded)
+        syncMgr()?.scheduleCloudPush()
         return xpAwarded
     }
 
@@ -338,6 +352,9 @@ class StudyRepository(
         }
 
         dao.insertChainWithSlices(parentChain, slices)
+        syncMgr()?.recordChainModified(parentChain.chainId)
+        slices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return parentChain
     }
@@ -409,7 +426,9 @@ class StudyRepository(
             slices = current.slices
         )
         dao.deleteTopicChainById(chainId)
+        syncMgr()?.recordDeletedChainTombstone(chainId, current.slices.map { it.sliceId })
         CustomSubjectAndAiStore.removeChainLink(chainId)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return snapshot
     }
@@ -419,6 +438,13 @@ class StudyRepository(
      */
     suspend fun restoreDeletedChainSnapshot(snapshot: DeletedChainSnapshot) {
         dao.insertChainWithSlices(snapshot.chain, snapshot.slices)
+        syncMgr()?.removeChainTombstonesForRestore(
+            chainId = snapshot.chain.chainId,
+            sliceIds = snapshot.slices.map { it.sliceId }
+        )
+        syncMgr()?.recordChainModified(snapshot.chain.chainId)
+        snapshot.slices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
     }
 
@@ -434,6 +460,8 @@ class StudyRepository(
 
         if (targetSlice.isRetentionEcho) {
             dao.deleteSliceById(sliceId)
+            syncMgr()?.recordDeletedSliceTombstone(sliceId)
+            syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
             return 0
         }
@@ -444,12 +472,16 @@ class StudyRepository(
 
         if (remainingCoreSlices.isEmpty() && chainWithSlices.echoSlices.isEmpty()) {
             dao.deleteTopicChainById(parent.chainId)
+            syncMgr()?.recordDeletedChainTombstone(parent.chainId, listOf(sliceId))
+            CustomSubjectAndAiStore.removeChainLink(parent.chainId)
+            syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
             return 0
         }
 
         val subsequentSlicesCount = remainingCoreSlices.count { it.sliceNumber > targetSlice.sliceNumber }
         dao.deleteSliceById(sliceId)
+        syncMgr()?.recordDeletedSliceTombstone(sliceId)
 
         val newTotalDays = max(1, remainingCoreSlices.size)
         val reindexedSlices = remainingCoreSlices.mapIndexed { idx, slice ->
@@ -483,6 +515,7 @@ class StudyRepository(
 
         if (reindexedSlices.isNotEmpty()) {
             dao.updateSlices(reindexedSlices)
+            reindexedSlices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
         }
 
         val allRemainingDone = reindexedSlices.isNotEmpty() && reindexedSlices.all { it.isCompleted }
@@ -493,6 +526,8 @@ class StudyRepository(
                 isChainCompleted = allRemainingDone
             )
         )
+        syncMgr()?.recordChainModified(parent.chainId)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return subsequentSlicesCount
     }
@@ -535,6 +570,7 @@ class StudyRepository(
                             )
                         }
                         dao.updateSlices(shiftedCore)
+                        shiftedCore.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
                         totalSlicesShifted += shiftedCore.size
                         totalSlicesShifted += shiftDownstreamLinkedChains(chainId, delta)
                     }
@@ -554,11 +590,13 @@ class StudyRepository(
                     )
                 }
                 dao.updateSlices(shiftedEchoes)
+                shiftedEchoes.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
                 totalSlicesShifted += overdueEchoes.size
             }
         }
 
         syncOverdueBossShields(todayEpochDay)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return DominoShiftResult(
             shiftedChainsCount = affectedChainIds.size,
@@ -586,6 +624,7 @@ class StudyRepository(
                     )
                 }
                 dao.updateSlices(shiftedSlices)
+                shiftedSlices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
                 totalShifted += shiftedSlices.size
             }
             // Recurse to any chains linked to this downstream chain
@@ -608,7 +647,9 @@ class StudyRepository(
                     shiftLagCount = targetSlice.shiftLagCount + 1
                 )
             )
+            syncMgr()?.recordSliceModified(targetSlice.sliceId)
             syncOverdueBossShields(LocalDate.now().toEpochDay())
+            syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
             return 1
         }
@@ -626,8 +667,10 @@ class StudyRepository(
             )
         }
         dao.updateSlices(updated)
+        updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
         val downstreamShifted = shiftDownstreamLinkedChains(targetSlice.chainId, 1L)
         syncOverdueBossShields(LocalDate.now().toEpochDay())
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updated.size + downstreamShifted
     }
@@ -663,10 +706,12 @@ class StudyRepository(
         }
 
         dao.updateSlices(updated)
+        updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
         if (delta > 0L) {
             shiftDownstreamLinkedChains(chainId, delta)
         }
         syncOverdueBossShields(todayEpochDay)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updated.size
     }
@@ -708,11 +753,13 @@ class StudyRepository(
                 newSlice
             }
             dao.updateSlices(updated)
+            updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
             chainFinishDates[chainId] = currentDate - 1L
             count += updated.size
         }
 
         syncOverdueBossShields(todayEpochDay)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return count
     }
@@ -735,9 +782,11 @@ class StudyRepository(
                     .coerceAtLeast(chain.bossMaxHp / 10)
                 if (chain.bossBonusShieldHp != requiredShield) {
                     dao.updateChain(chain.copy(bossBonusShieldHp = requiredShield))
+                    syncMgr()?.recordChainModified(chain.chainId)
                 }
             } else if (chain.bossBonusShieldHp != 0) {
                 dao.updateChain(chain.copy(bossBonusShieldHp = 0))
+                syncMgr()?.recordChainModified(chain.chainId)
             }
         }
     }
@@ -760,7 +809,9 @@ class StudyRepository(
 
         val updatedSlice = slice.copy(problemsCompleted = nextCount)
         dao.updateSlice(updatedSlice)
+        syncMgr()?.recordSliceModified(sliceId)
         awardXp(10 * slice.xpMultiplier)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updatedSlice
     }
@@ -774,6 +825,8 @@ class StudyRepository(
 
         val updatedSlice = slice.copy(problemsCompleted = (slice.problemsCompleted - 1).coerceAtLeast(0))
         dao.updateSlice(updatedSlice)
+        syncMgr()?.recordSliceModified(sliceId)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return updatedSlice
     }
@@ -807,6 +860,7 @@ class StudyRepository(
             completedAtTimestamp = System.currentTimeMillis()
         )
         dao.updateSlice(completedSlice)
+        syncMgr()?.recordSliceModified(sliceId)
 
         val coreSlicesAfterUpdate = chainWithSlices.coreSlices.map {
             if (it.sliceId == slice.sliceId) completedSlice else it
@@ -821,11 +875,13 @@ class StudyRepository(
             isChainCompleted = allCoreCompleted
         )
         dao.updateChain(updatedChain)
+        syncMgr()?.recordChainModified(parentChain.chainId)
 
         val bossBonusXp = if (allCoreCompleted && !parentChain.isChainCompleted) 100 else 0
         val totalAwardedXp = totalSliceXp + bossBonusXp
         awardXp(totalAwardedXp)
 
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
 
         return SliceCompletionResult(
@@ -850,6 +906,7 @@ class StudyRepository(
             completedAtTimestamp = null
         )
         dao.updateSlice(uncompletedSlice)
+        syncMgr()?.recordSliceModified(sliceId)
 
         val chainWithSlices = dao.getChainWithSlices(slice.chainId)
         if (chainWithSlices != null) {
@@ -857,6 +914,7 @@ class StudyRepository(
             val hasIncompleteCore = chainWithSlices.coreSlices.any { !it.isCompleted || it.sliceId == sliceId }
             if (hasIncompleteCore && parentChain.isChainCompleted) {
                 dao.updateChain(parentChain.copy(isChainCompleted = false))
+                syncMgr()?.recordChainModified(parentChain.chainId)
             }
         }
 
@@ -864,6 +922,7 @@ class StudyRepository(
         val baseCompletionXp = 50 * slice.xpMultiplier
         awardXp(-baseCompletionXp)
 
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return uncompletedSlice
     }
@@ -912,6 +971,8 @@ class StudyRepository(
         }
 
         dao.insertSlices(echoes)
+        echoes.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return echoes
     }
@@ -930,6 +991,8 @@ class StudyRepository(
             problemsCompleted = min(slice.problemsCompleted, newTarget)
         )
         dao.updateSlice(updated)
+        syncMgr()?.recordSliceModified(sliceId)
+        syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
     }
 
@@ -941,6 +1004,8 @@ class StudyRepository(
         val slice = dao.getSliceById(sliceId) ?: return
         if (slice.xpMultiplier < 2) {
             dao.updateSlice(slice.copy(xpMultiplier = 2))
+            syncMgr()?.recordSliceModified(sliceId)
+            syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
         }
     }
@@ -971,6 +1036,7 @@ class StudyRepository(
                 lastStudyEpochDay = today
             )
         )
+        syncMgr()?.scheduleCloudPush()
     }
 
     // =========================================================================
@@ -1022,6 +1088,9 @@ class StudyRepository(
                 neuroSessions = backupDto.neuroSessions
             )
 
+            backupDto.chains.forEach { syncMgr()?.recordChainModified(it.chainId) }
+            backupDto.slices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+            syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
             Result.success("Restored ${backupDto.chains.size} chapters and ${backupDto.slices.size} slices cleanly!")
         } catch (e: Exception) {
