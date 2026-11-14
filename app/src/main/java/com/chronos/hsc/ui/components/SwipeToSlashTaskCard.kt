@@ -130,6 +130,7 @@ fun SwipeToSlashTaskCard(
     onRequestDelete: () -> Unit,
     onCatchUpToToday: () -> Unit = {},
     matchingBatchExam: BatchExamRecord? = null,
+    queuedOverdueInChainCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val slice = item.slice
@@ -180,6 +181,7 @@ fun SwipeToSlashTaskCard(
         slice.problemsCompleted >= slice.problemsTarget
 
     val isOverdue = !slice.isCompleted && slice.scheduledDateEpochDay < todayEpochDay
+    val daysOverdue = if (isOverdue) (todayEpochDay - slice.scheduledDateEpochDay).coerceAtLeast(1L) else 0L
 
     // Animated left-to-right background fill gradient from Sub-Counter progress
     val animatedFillFraction by animateFloatAsState(
@@ -581,8 +583,8 @@ fun SwipeToSlashTaskCard(
                             }
                         }
 
-                        // Lag Status Badge
-                        if (slice.isLagging) {
+                        // Lag Status Badge (for Domino-shifted future slices)
+                        if (slice.isLagging && !isOverdue) {
                             val lagDays = slice.effectiveLagDays
                             Box(
                                 modifier = Modifier
@@ -641,6 +643,35 @@ fun SwipeToSlashTaskCard(
                                 softWrap = false
                             )
                         }
+                    }
+                }
+
+                // Pulsing Overdue Carryover & Chain Queue Badge
+                if (isOverdue) {
+                    Spacer(modifier = Modifier.height(7.dp))
+                    val dayWord = if (daysOverdue == 1L) "DAY" else "DAYS"
+                    val queuedText = if (queuedOverdueInChainCount > 0) " • +$queuedOverdueInChainCount MORE QUEUED" else ""
+                    val alertColor = if (isNature) NatureLagRust else CyberCrimson
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(alertColor.copy(alpha = 0.12f + 0.12f * readyPulseAlpha))
+                            .border(
+                                width = 1.dp,
+                                color = alertColor.copy(alpha = readyPulseAlpha),
+                                shape = RoundedCornerShape(7.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "🚨 $daysOverdue $dayWord OVERDUE$queuedText",
+                            color = alertColor,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
 

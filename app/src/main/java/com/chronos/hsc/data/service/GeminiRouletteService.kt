@@ -330,7 +330,10 @@ object GeminiRouletteService {
 
         val totalCompletedToday = allTodayCompletedSlices.size
         val totalRemainingCount = candidateSlices.size
-        val maxLagDays = candidateSlices.maxOfOrNull { it.slice.effectiveLagDays } ?: 0
+        val maxLagDays = candidateSlices.maxOfOrNull {
+            val daysOverdue = (todayEpoch - it.slice.scheduledDateEpochDay).coerceAtLeast(0L).toInt()
+            maxOf(it.slice.effectiveLagDays, daysOverdue)
+        } ?: 0
 
         // Cooldown & Batch Exam Cap Guards
         val hasAlternativeSubject = candidateSlices.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
@@ -397,6 +400,7 @@ object GeminiRouletteService {
             val bucket = classifySliceBucket(candidate, todayEpoch, upcomingBatchExams)
             val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(candidate) }
             val onCooldown = isSubjectOnCooldown && subName.equals(lastSpunSubject, ignoreCase = true)
+            val daysOverdue = (todayEpoch - candidate.slice.scheduledDateEpochDay).coerceAtLeast(0L)
 
             candidateArray.put(
                 JSONObject().apply {
@@ -414,8 +418,9 @@ object GeminiRouletteService {
                     put("cognitiveLabel", cat.label)
                     put("phaseTag", candidate.slice.phaseTag)
                     put("problemsProgress", "${candidate.slice.problemsCompleted}/${candidate.slice.problemsTarget}")
-                    put("effectiveLagDays", candidate.slice.effectiveLagDays)
-                    put("isLagging", candidate.slice.isLagging)
+                    put("daysOverdue", daysOverdue)
+                    put("effectiveLagDays", maxOf(candidate.slice.effectiveLagDays.toLong(), daysOverdue))
+                    put("isLagging", candidate.slice.isLagging || daysOverdue > 0L)
                     put("isRejectedInSession", rejectedSlices.contains(candidate.slice.sliceId))
                     put("isSubjectOnCooldown", onCooldown)
                     if (matchingExam != null) {
@@ -651,7 +656,9 @@ object GeminiRouletteService {
         val subName = getSubjectName(winner)
         val chNum = winner.chain.chapterNumber
         val chName = winner.chain.chapterName.ifBlank { "Chapter $chNum" }
-        val lagDays = winner.slice.effectiveLagDays
+        val todayEpoch = BangladeshTimeContext.now().zonedDateTime.toLocalDate().toEpochDay()
+        val daysOverdue = (todayEpoch - winner.slice.scheduledDateEpochDay).coerceAtLeast(0L).toInt()
+        val lagDays = maxOf(winner.slice.effectiveLagDays, daysOverdue)
         val probTarget = winner.slice.problemsTarget
         val probDone = winner.slice.problemsCompleted
 
@@ -827,15 +834,21 @@ object GeminiRouletteService {
         val whyText: String
         val nextText: String
 
+        val daysOverdueOf: (SliceWithParentChain) -> Int = { item ->
+            val overdue = (todayEpoch - item.slice.scheduledDateEpochDay).coerceAtLeast(0L).toInt()
+            maxOf(item.slice.effectiveLagDays, overdue)
+        }
+
         if (filteredC.isNotEmpty() && (isMorningOrNight || filteredT.isEmpty() || telemetry.spinsComeback <= telemetry.spinsTodayNormal)) {
-            // Pick COMEBACK_LEFTOVER: prioritize highest lag or matching cognitive category
+            // Pick COMEBACK_LEFTOVER: prioritize highest days overdue / lag or matching cognitive category
             selectedSlice = filteredC.filter { getCognitiveCategory(it) == targetCategory }
-                .maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
-                ?: filteredC.maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
+                .maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
+                ?: filteredC.maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
                 ?: filteredC.first()
             val subName = getSubjectName(selectedSlice)
+            val lagCount = daysOverdueOf(selectedSlice)
             transitionTag = "🔥 COMEBACK HERO | Rescue Missed Slice"
-            whyText = "Rescuing overdue slice for $subName (Ch ${selectedSlice.chain.chapterNumber}, Lag: ${selectedSlice.slice.effectiveLagDays}d) to stop compounding backlog."
+            whyText = "Rescuing overdue slice for $subName (Ch ${selectedSlice.chain.chapterNumber}, Lag: ${lagCount}d) to stop compounding backlog."
             nextText = "After this 25m sprint, proceed to today's core syllabus tasks."
         } else if (filteredT.isNotEmpty() && (isBatchExamCapped || filteredB.isEmpty() || telemetry.spinsTodayNormal <= telemetry.spinsBatchExam)) {
             // Pick TODAY_NORMAL: prioritize matching target category, then xpMultiplier
@@ -863,7 +876,7 @@ object GeminiRouletteService {
         } else {
             // Fallback from general pool
             selectedSlice = pool.filter { getCognitiveCategory(it) == targetCategory }
-                .maxByOrNull { it.slice.effectiveLagDays * 10 + it.slice.xpMultiplier }
+                .maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
                 ?: pool.first()
             val subName = getSubjectName(selectedSlice)
             transitionTag = "⚡ COGNITIVE REBOUND | Brain Channel Switch"

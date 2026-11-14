@@ -326,6 +326,7 @@ fun MainScreen(
                         onConvertHiddenToLightReview = viewModel::convertHiddenSliceToLightReview,
                         onCatchUpSlice = viewModel::catchUpSliceToToday,
                         onInstantCatchUpAll = viewModel::instantCatchUpAllLaggingChains,
+                        onToggleShowAllOverdueIndividually = viewModel::toggleShowAllOverdueIndividually,
                         onOpenCloudSync = {
                             selectedTabIndex = ChronosTab.UI_SETTINGS.ordinal
                         }
@@ -388,7 +389,7 @@ fun MainScreen(
         if (state.isTaskRouletteOpen) {
             TaskRouletteModal(
                 incompleteSlices = state.rouletteCandidatePool,
-                allTodayCompletedSlices = state.visibleDateSlices.filter { it.slice.isCompleted },
+                allTodayCompletedSlices = state.todaySlices.filter { it.slice.isCompleted },
                 batteryMode = state.batteryMode,
                 pinnedExam = state.pinnedExam,
                 userStreakDays = state.userStats.streakDays,
@@ -600,6 +601,7 @@ private fun TodayBattlegroundTab(
     onConvertHiddenToLightReview: (String) -> Unit,
     onCatchUpSlice: (String) -> Unit = {},
     onInstantCatchUpAll: () -> Unit = {},
+    onToggleShowAllOverdueIndividually: () -> Unit = {},
     onOpenCloudSync: () -> Unit = {}
 ) {
     var isZombieHiddenExpanded by remember { mutableStateOf(false) }
@@ -689,9 +691,16 @@ private fun TodayBattlegroundTab(
             // 3. 1-Tap Domino Shift Conflict Banner (When past slices are unfinished)
             if (state.overdueSlices.isNotEmpty()) {
                 item {
+                    val hasMultiDayOverdueChains = state.overdueSlices.size > state.overdueChainsCount ||
+                        state.overdueSlices.any { overdueItem ->
+                            state.todaySlices.count { it.chain.chainId == overdueItem.chain.chainId && !it.slice.isCompleted } > 1
+                        }
                     DominoConflictBanner(
                         overdueSlices = state.overdueSlices,
                         overdueChainsCount = state.overdueChainsCount,
+                        hasMultiDayOverdueChains = hasMultiDayOverdueChains,
+                        showAllOverdueIndividually = state.showAllOverdueIndividually,
+                        onToggleShowAllOverdueIndividually = onToggleShowAllOverdueIndividually,
                         onExecuteDominoShift = onExecuteDominoShift
                     )
                 }
@@ -703,6 +712,8 @@ private fun TodayBattlegroundTab(
                     todayEpochDay = state.todayEpochDay,
                     selectedDateEpochDay = state.selectedDateEpochDay,
                     allChainsWithSlices = state.allChainsWithSlices,
+                    overdueSlices = state.overdueSlices,
+                    datesWithOverdueTasks = state.datesWithOverdueTasks,
                     isCompact = isCompactHeader,
                     onSelectDate = onSelectDate,
                     onOpenRoulette = onOpenRoulette
@@ -719,12 +730,14 @@ private fun TodayBattlegroundTab(
 
             // 6. Section Title for Selected Date Slices
             item {
-                val selectedLocalDate = LocalDate.ofEpochDay(state.selectedDateEpochDay)
                 val dateTitle = when (state.selectedDateEpochDay) {
+                    StudyViewModel.ALL_OVERDUE_FILTER_EPOCH_DAY -> "🔥 ALL OVERDUE BACKLOG SLICES (${state.overdueSlices.size})"
                     state.todayEpochDay -> "TODAY'S BATTLEGROUND SLICES"
                     state.todayEpochDay - 1L -> "YESTERDAY'S SLICES"
                     state.todayEpochDay + 1L -> "TOMORROW'S SCHEDULED SLICES"
-                    else -> selectedLocalDate.format(DateTimeFormatter.ofPattern("EEE, MMM d")).uppercase() + " SLICES"
+                    else -> LocalDate.ofEpochDay(state.selectedDateEpochDay)
+                        .format(DateTimeFormatter.ofPattern("EEE, MMM d"))
+                        .uppercase() + " SLICES"
                 }
 
                 Row(
@@ -820,7 +833,8 @@ private fun TodayBattlegroundTab(
                         onPushDominoPlusOneDay = { onPushDominoPlusOne(sliceWithChain) },
                         onRequestDelete = { onRequestDeleteSlice(sliceWithChain) },
                         onCatchUpToToday = { onCatchUpSlice(sliceWithChain.slice.sliceId) },
-                        matchingBatchExam = state.activeBatchExams.firstOrNull { it.matchesSlice(sliceWithChain) }
+                        matchingBatchExam = state.activeBatchExams.firstOrNull { it.matchesSlice(sliceWithChain) },
+                        queuedOverdueInChainCount = state.overdueQueuedCountBySliceId[sliceWithChain.slice.sliceId] ?: 0
                     )
                 }
             }
@@ -1562,6 +1576,9 @@ private fun ActiveSprintBanner(
 private fun DominoConflictBanner(
     overdueSlices: List<SliceWithParentChain>,
     overdueChainsCount: Int,
+    hasMultiDayOverdueChains: Boolean,
+    showAllOverdueIndividually: Boolean,
+    onToggleShowAllOverdueIndividually: () -> Unit,
     onExecuteDominoShift: () -> Unit
 ) {
     val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
@@ -1576,7 +1593,8 @@ private fun DominoConflictBanner(
         label = "dominoPulse"
     )
 
-    val badgesPreview = overdueSlices.joinToString(", ") { it.slice.shortBadge }
+    val badgesPreview = overdueSlices.take(6).joinToString(", ") { it.slice.shortBadge } +
+        if (overdueSlices.size > 6) " +${overdueSlices.size - 6} more" else ""
 
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -1653,6 +1671,53 @@ private fun DominoConflictBanner(
                     fontSize = 12.sp
                 )
             }
+
+            if (hasMultiDayOverdueChains || showAllOverdueIndividually) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(9.dp),
+                    color = if (showAllOverdueIndividually) {
+                        (if (isNature) NatureLeafGreen else CyberAmber).copy(alpha = 0.16f)
+                    } else {
+                        if (isNature) Color(0xFF2D1628) else Color(0xFF1E1B22)
+                    },
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (showAllOverdueIndividually) {
+                            if (isNature) NatureLeafGreen else CyberAmber
+                        } else {
+                            Color(0xFF52525B)
+                        }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggleShowAllOverdueIndividually() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (showAllOverdueIndividually) {
+                                "✓ Showing All Overdue Slices Individually (${overdueSlices.size}) • Tap to Group"
+                            } else {
+                                "📋 Show All Overdue Slices Individually (${overdueSlices.size})"
+                            },
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.5.sp,
+                            color = if (showAllOverdueIndividually) {
+                                if (isNature) NatureLeafGreen else CyberAmber
+                            } else {
+                                TextPrimary
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1662,6 +1727,8 @@ private fun DateScrubberAndRouletteSection(
     todayEpochDay: Long,
     selectedDateEpochDay: Long,
     allChainsWithSlices: List<TopicChainWithSlices>,
+    overdueSlices: List<SliceWithParentChain>,
+    datesWithOverdueTasks: List<Long>,
     isCompact: Boolean = false,
     onSelectDate: (Long) -> Unit,
     onOpenRoulette: () -> Unit
@@ -1670,22 +1737,26 @@ private fun DateScrubberAndRouletteSection(
     val allSlices = remember(allChainsWithSlices) {
         allChainsWithSlices.flatMap { it.slices }
     }
+    val overdueCountByDay = remember(overdueSlices) {
+        overdueSlices.groupingBy { it.slice.scheduledDateEpochDay }.eachCount()
+    }
     val dayOfWeekFormatter = remember { DateTimeFormatter.ofPattern("EEE") }
     val monthFormatter = remember { DateTimeFormatter.ofPattern("MMM") }
 
-    // Build a 1.5-month (45-day) window starting from past 3 days up to today + 45 days
+    // Keep ALL past dates with unfinished tasks visible (no 3-day cutoff) alongside today + 45 days
     val futureDaysWindow = 45L
-    val baseCenterEpoch = if (selectedDateEpochDay in (todayEpochDay - 3L)..(todayEpochDay + futureDaysWindow)) {
+    val baseCenterEpoch = if (
+        selectedDateEpochDay == StudyViewModel.ALL_OVERDUE_FILTER_EPOCH_DAY ||
+        selectedDateEpochDay in (todayEpochDay - 3L)..(todayEpochDay + futureDaysWindow)
+    ) {
         todayEpochDay
     } else {
         selectedDateEpochDay
     }
-    val scrubberDays = remember(baseCenterEpoch, todayEpochDay) {
-        if (baseCenterEpoch == todayEpochDay) {
-            (-3L..futureDaysWindow).map { todayEpochDay + it }
-        } else {
-            (-3L..futureDaysWindow).map { baseCenterEpoch + it }
-        }
+    val scrubberDays = remember(baseCenterEpoch, todayEpochDay, datesWithOverdueTasks, overdueCountByDay) {
+        val rollingWindow = (-3L..futureDaysWindow).map { baseCenterEpoch + it }
+        val overduePastDates = (datesWithOverdueTasks + overdueCountByDay.keys).filter { it < todayEpochDay }
+        (overduePastDates + rollingWindow).distinct().sorted()
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(if (isCompact) 6.dp else 10.dp)) {
@@ -1790,7 +1861,7 @@ private fun DateScrubberAndRouletteSection(
         val scrubberScrollState = rememberScrollState()
         val density = LocalDensity.current
         LaunchedEffect(todayEpochDay) {
-            val targetIndex = scrubberDays.indexOf(todayEpochDay).coerceAtLeast(0)
+            val targetIndex = (scrubberDays.indexOf(todayEpochDay) - 1).coerceAtLeast(0)
             if (targetIndex > 0) {
                 val itemWidthPx = with(density) { 65.dp.toPx() }
                 val paddingPx = with(density) { 16.dp.toPx() }
@@ -1798,92 +1869,167 @@ private fun DateScrubberAndRouletteSection(
             }
         }
 
-        // Horizontal Date Scrubber
+        // Pinned "ALL OVERDUE" Pill + Horizontal Date Scrubber
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrubberScrollState),
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            scrubberDays.forEach { dayEpoch ->
-                val date = LocalDate.ofEpochDay(dayEpoch)
-                val isSelected = selectedDateEpochDay == dayEpoch
-                val isToday = dayEpoch == todayEpochDay
-                val slicesOnDay = allSlices.filter { it.scheduledDateEpochDay == dayEpoch }
-                val incompleteCount = slicesOnDay.count { !it.isCompleted }
-                val hasOverdue = dayEpoch < todayEpochDay && incompleteCount > 0
-
-                val cardSurface = when {
-                    isSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else Color(0xFF27272A)
-                    hasOverdue -> if (isNature) Color(0xFF331610) else Color(0xFF231015)
-                    else -> if (isNature) TerrariumSurface else ObsidianSurface
+            if (overdueSlices.isNotEmpty()) {
+                val isAllOverdueSelected = selectedDateEpochDay == StudyViewModel.ALL_OVERDUE_FILTER_EPOCH_DAY
+                val pillBorder = when {
+                    isAllOverdueSelected -> if (isNature) NatureLeafGreen else Color.White
+                    else -> if (isNature) Color(0xFFEA580C) else CyberCrimson
                 }
-
-                val cardBorder = when {
-                    isSelected -> if (isNature) NatureLeafGreen else Color.White
-                    hasOverdue -> if (isNature) Color(0xFFEA580C) else Color(0xFFF43F5E)
-                    isToday -> if (isNature) NatureSproutLime.copy(alpha = 0.7f) else Color(0xFF52525B)
-                    else -> if (isNature) TerrariumBorder else ObsidianBorder
+                val pillSurface = when {
+                    isAllOverdueSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else Color(0xFF27272A)
+                    else -> if (isNature) Color(0xFF331610) else Color(0xFF231015)
                 }
-
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = cardSurface,
+                    color = pillSurface,
                     border = BorderStroke(
-                        width = if (isSelected || isToday) 1.5.dp else 1.dp,
-                        color = cardBorder
+                        width = if (isAllOverdueSelected) 1.5.dp else 1.2.dp,
+                        color = pillBorder
                     ),
-                    modifier = Modifier
-                        .width(if (isCompact) 58.dp else 64.dp)
-                        .clickable { onSelectDate(dayEpoch) }
+                    modifier = Modifier.clickable {
+                        onSelectDate(StudyViewModel.ALL_OVERDUE_FILTER_EPOCH_DAY)
+                    }
                 ) {
                     Column(
-                        modifier = Modifier.padding(vertical = if (isCompact) 5.dp else 8.dp, horizontal = 4.dp),
+                        modifier = Modifier.padding(
+                            vertical = if (isCompact) 5.dp else 8.dp,
+                            horizontal = if (isCompact) 8.dp else 10.dp
+                        ),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = if (isToday) "TODAY" else date.format(dayOfWeekFormatter).uppercase(),
+                            text = "🔥 ALL",
                             fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = if (isCompact) 8.5.sp else 9.sp,
-                            color = when {
-                                isSelected -> if (isNature) NatureLeafGreen else Color.White
-                                isToday -> if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
-                                else -> TextSecondary
-                            }
+                            color = if (isAllOverdueSelected) TextPrimary else CyberCrimson
                         )
                         Spacer(modifier = Modifier.height(if (isCompact) 1.dp else 2.dp))
                         Text(
-                            text = "${date.dayOfMonth}",
+                            text = "OVERDUE",
+                            fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = if (isCompact) 14.sp else 15.sp,
+                            fontSize = if (isCompact) 8.5.sp else 9.sp,
                             color = TextPrimary
                         )
-                        Text(
-                            text = date.format(monthFormatter),
-                            fontSize = if (isCompact) 8.5.sp else 9.sp,
-                            color = TextMuted
-                        )
-                        Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 3.dp))
+                        Spacer(modifier = Modifier.height(if (isCompact) 3.dp else 4.dp))
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(
-                                    when {
-                                        hasOverdue -> if (isNature) Color(0xFFEA580C) else CyberCrimson
-                                        slicesOnDay.isNotEmpty() -> if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
-                                        else -> Color.Transparent
-                                    }
-                                )
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .background(if (isNature) Color(0xFFEA580C) else CyberCrimson)
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
-                                text = if (slicesOnDay.isEmpty()) "—" else "${slicesOnDay.size} sl",
+                                text = "(${overdueSlices.size})",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 8.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (hasOverdue) Color.White else (if (isNature) NatureLeafGreen else CyberCyan)
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
                             )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(scrubberScrollState),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                scrubberDays.forEach { dayEpoch ->
+                    val date = LocalDate.ofEpochDay(dayEpoch)
+                    val isSelected = selectedDateEpochDay == dayEpoch
+                    val isToday = dayEpoch == todayEpochDay
+                    val slicesOnDay = allSlices.filter { it.scheduledDateEpochDay == dayEpoch }
+                    val unfinishedCount = maxOf(
+                        slicesOnDay.count { !it.isCompleted },
+                        overdueCountByDay[dayEpoch] ?: 0
+                    )
+                    val hasOverdue = dayEpoch < todayEpochDay && unfinishedCount > 0
+
+                    val cardSurface = when {
+                        isSelected -> if (isNature) NatureLeafGreen.copy(alpha = 0.22f) else Color(0xFF27272A)
+                        hasOverdue -> if (isNature) Color(0xFF331610) else Color(0xFF231015)
+                        else -> if (isNature) TerrariumSurface else ObsidianSurface
+                    }
+
+                    val cardBorder = when {
+                        isSelected -> if (isNature) NatureLeafGreen else Color.White
+                        hasOverdue -> if (isNature) Color(0xFFEA580C) else Color(0xFFF43F5E)
+                        isToday -> if (isNature) NatureSproutLime.copy(alpha = 0.7f) else Color(0xFF52525B)
+                        else -> if (isNature) TerrariumBorder else ObsidianBorder
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = cardSurface,
+                        border = BorderStroke(
+                            width = if (isSelected || isToday) 1.5.dp else 1.dp,
+                            color = cardBorder
+                        ),
+                        modifier = Modifier
+                            .width(if (isCompact) 58.dp else 64.dp)
+                            .clickable { onSelectDate(dayEpoch) }
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = if (isCompact) 5.dp else 8.dp, horizontal = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = if (isToday) "TODAY" else date.format(dayOfWeekFormatter).uppercase(),
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = if (isCompact) 8.5.sp else 9.sp,
+                                color = when {
+                                    isSelected -> if (isNature) NatureLeafGreen else Color.White
+                                    isToday -> if (isNature) NatureSproutLime else Color(0xFFA1A1AA)
+                                    else -> TextSecondary
+                                }
+                            )
+                            Spacer(modifier = Modifier.height(if (isCompact) 1.dp else 2.dp))
+                            Text(
+                                text = "${date.dayOfMonth}",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = if (isCompact) 14.sp else 15.sp,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = date.format(monthFormatter),
+                                fontSize = if (isCompact) 8.5.sp else 9.sp,
+                                color = TextMuted
+                            )
+                            Spacer(modifier = Modifier.height(if (isCompact) 2.dp else 3.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(
+                                        when {
+                                            hasOverdue -> if (isNature) Color(0xFFEA580C) else CyberCrimson
+                                            slicesOnDay.isNotEmpty() -> if (isNature) TerrariumSurfaceElevated else ObsidianSurfaceElevated
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = when {
+                                        hasOverdue -> "⚠️${unfinishedCount}"
+                                        slicesOnDay.isEmpty() -> "—"
+                                        else -> "${slicesOnDay.size} sl"
+                                    },
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (hasOverdue) Color.White else (if (isNature) NatureLeafGreen else CyberCyan)
+                                )
+                            }
                         }
                     }
                 }

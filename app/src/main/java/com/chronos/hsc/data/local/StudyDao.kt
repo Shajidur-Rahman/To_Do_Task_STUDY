@@ -43,6 +43,27 @@ interface StudyDao {
     @Query(
         """
         SELECT * FROM daily_task_slices 
+        WHERE scheduledDateEpochDay = :todayEpochDay 
+           OR (scheduledDateEpochDay < :todayEpochDay AND isCompleted = 0)
+        ORDER BY isCompleted ASC, scheduledDateEpochDay ASC, sliceNumber ASC
+        """
+    )
+    fun observeTodayAndAllUnfinishedPastSlices(todayEpochDay: Long): Flow<List<SliceWithParentChain>>
+
+    @Query(
+        """
+        SELECT DISTINCT scheduledDateEpochDay 
+        FROM daily_task_slices 
+        WHERE scheduledDateEpochDay < :todayEpochDay AND isCompleted = 0 
+        ORDER BY scheduledDateEpochDay ASC
+        """
+    )
+    fun observeDatesWithOverdueTasks(todayEpochDay: Long): Flow<List<Long>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT * FROM daily_task_slices 
         WHERE isRetentionEcho = 1 AND isCompleted = 0 AND scheduledDateEpochDay >= :todayEpochDay
         ORDER BY scheduledDateEpochDay ASC
         """

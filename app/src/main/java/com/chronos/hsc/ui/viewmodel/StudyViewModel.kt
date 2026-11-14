@@ -98,6 +98,9 @@ data class StudyUiState(
     val isBatchExamModalOpen: Boolean = false,
     val activeBatchExams: List<BatchExamRecord> = emptyList(),
     val todaySlices: List<SliceWithParentChain> = emptyList(),
+    val showAllOverdueIndividually: Boolean = false,
+    val datesWithOverdueTasks: List<Long> = emptyList(),
+    val overdueQueuedCountBySliceId: Map<String, Int> = emptyMap(),
     val cloudUserEmail: String? = null,
     val cloudSyncStatus: SyncStatus = SyncStatus.OFFLINE_LOCAL_ONLY,
     val lastSyncedTimestamp: Long? = null,
@@ -120,7 +123,8 @@ private data class ModalControlState(
     val conqueredChainForEchoDialog: StudyTopicChain? = null,
     val isTaskRouletteOpen: Boolean = false,
     val sprintTimerState: SprintTimerState? = null,
-    val isBatchExamModalOpen: Boolean = false
+    val isBatchExamModalOpen: Boolean = false,
+    val showAllOverdueIndividually: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -147,16 +151,27 @@ class StudyViewModel(
     }
 
     private val slicesForSelectedDateFlow = selectedDateFlow.flatMapLatest { epochDay ->
-        repository.observeSlicesForDate(epochDay)
+        when (epochDay) {
+            todayEpochDay -> repository.observeTodayAndAllUnfinishedPastSlices(todayEpochDay)
+            ALL_OVERDUE_FILTER_EPOCH_DAY -> repository.observeOverdueSlices(todayEpochDay)
+            else -> repository.observeSlicesForDate(epochDay)
+        }
     }
 
     private val dateSlicesBundleFlow = combine(
         selectedDateFlow,
         slicesForSelectedDateFlow,
-        repository.observeSlicesForDate(todayEpochDay),
-        repository.observeOverdueSlices(todayEpochDay)
-    ) { selectedDate, dateSlices, todaySlices, overdueSlices ->
-        DateSlicesBundle(selectedDate, dateSlices, todaySlices, overdueSlices)
+        repository.observeTodayAndAllUnfinishedPastSlices(todayEpochDay),
+        repository.observeOverdueSlices(todayEpochDay),
+        repository.observeDatesWithOverdueTasks(todayEpochDay)
+    ) { selectedDate, dateSlices, todaySlices, overdueSlices, datesWithOverdueTasks ->
+        DateSlicesBundle(
+            selectedDateEpochDay = selectedDate,
+            dateSlices = dateSlices,
+            todaySlices = todaySlices,
+            overdueSlices = overdueSlices,
+            datesWithOverdueTasks = datesWithOverdueTasks
+        )
     }
 
     private val coreDataFlow = combine(
@@ -170,7 +185,8 @@ class StudyViewModel(
             userStats = userStats,
             dateSlices = bundle.dateSlices,
             overdueSlices = bundle.overdueSlices,
-            todaySlices = bundle.todaySlices
+            todaySlices = bundle.todaySlices,
+            datesWithOverdueTasks = bundle.datesWithOverdueTasks
         )
     }
 
@@ -228,8 +244,18 @@ class StudyViewModel(
         modalControlFlow,
         externalStoresFlow
     ) { core, analytics, examAndNeuro, modals, (batchExams, cloudSync) ->
+        val (slicesForDisplay, queuedCountMap) = if (
+            core.selectedDateEpochDay == todayEpochDay && !modals.showAllOverdueIndividually
+        ) {
+            collapseMultiDayOverdueChains(
+                slices = core.dateSlices,
+                todayEpochDay = todayEpochDay
+            )
+        } else {
+            core.dateSlices to emptyMap()
+        }
         val (visible, hidden) = filterAndSortByBatteryMode(
-            slices = core.dateSlices,
+            slices = slicesForDisplay,
             batteryMode = core.batteryMode
         )
         val activeExams = batchExams
@@ -268,6 +294,9 @@ class StudyViewModel(
             isBatchExamModalOpen = modals.isBatchExamModalOpen,
             activeBatchExams = activeExams,
             todaySlices = core.todaySlices,
+            showAllOverdueIndividually = modals.showAllOverdueIndividually,
+            datesWithOverdueTasks = core.datesWithOverdueTasks,
+            overdueQueuedCountBySliceId = queuedCountMap,
             cloudUserEmail = cloudSync.userEmail,
             cloudSyncStatus = cloudSync.syncStatus,
             lastSyncedTimestamp = cloudSync.lastSyncedTimestamp,
@@ -279,6 +308,35 @@ class StudyViewModel(
         initialValue = StudyUiState()
     )
 
+    private fun collapseMultiDayOverdueChains(
+        slices: List<SliceWithParentChain>,
+        todayEpochDay: Long
+    ): Pair<List<SliceWithParentChain>, Map<String, Int>> {
+        val incomplete = slices.filter { !it.slice.isCompleted }
+        val completed = slices.filter { it.slice.isCompleted }
+
+        val resultIncomplete = mutableListOf<SliceWithParentChain>()
+        val queuedCounts = mutableMapOf<String, Int>()
+
+        val groupedByChain = incomplete.groupBy { it.chain.chainId }
+        for ((_, chainSlices) in groupedByChain) {
+            val ordered = chainSlices.sortedWith(
+                compareBy<SliceWithParentChain> { it.slice.scheduledDateEpochDay }
+                    .thenBy { it.slice.sliceNumber }
+            )
+            val hasOverdueInChain = ordered.any { it.slice.scheduledDateEpochDay < todayEpochDay }
+            if (hasOverdueInChain && ordered.size > 1) {
+                val earliest = ordered.first()
+                resultIncomplete.add(earliest)
+                queuedCounts[earliest.slice.sliceId] = ordered.size - 1
+            } else {
+                resultIncomplete.addAll(ordered)
+            }
+        }
+
+        return (resultIncomplete + completed) to queuedCounts
+    }
+
     private fun filterAndSortByBatteryMode(
         slices: List<SliceWithParentChain>,
         batteryMode: EnergyLevel
@@ -289,6 +347,7 @@ class StudyViewModel(
                     compareBy<SliceWithParentChain> { it.slice.isCompleted }
                         .thenByDescending { it.effectiveEnergyLevel.sortWeight }
                         .thenBy { it.slice.isRetentionEcho }
+                        .thenBy { it.slice.scheduledDateEpochDay }
                         .thenBy { it.slice.sliceNumber }
                 )
                 sorted to emptyList()
@@ -298,6 +357,7 @@ class StudyViewModel(
                 val sorted = slices.sortedWith(
                     compareBy<SliceWithParentChain> { it.slice.isCompleted }
                         .thenBy { absWeightDistanceFromMedium(it.effectiveEnergyLevel) }
+                        .thenBy { it.slice.scheduledDateEpochDay }
                         .thenBy { it.slice.sliceNumber }
                 )
                 sorted to emptyList()
@@ -315,6 +375,7 @@ class StudyViewModel(
                 }
                 val sortedVisible = visible.sortedWith(
                     compareBy<SliceWithParentChain> { it.slice.isCompleted }
+                        .thenBy { it.slice.scheduledDateEpochDay }
                         .thenBy { it.slice.sliceNumber }
                 )
                 sortedVisible to hidden
@@ -331,6 +392,12 @@ class StudyViewModel(
 
     fun selectDate(epochDay: Long) {
         selectedDateFlow.value = epochDay
+    }
+
+    fun toggleShowAllOverdueIndividually() {
+        modalControlFlow.update {
+            it.copy(showAllOverdueIndividually = !it.showAllOverdueIndividually)
+        }
     }
 
     fun selectBatteryMode(mode: EnergyLevel) {
@@ -953,7 +1020,8 @@ class StudyViewModel(
         val selectedDateEpochDay: Long,
         val dateSlices: List<SliceWithParentChain>,
         val todaySlices: List<SliceWithParentChain>,
-        val overdueSlices: List<SliceWithParentChain>
+        val overdueSlices: List<SliceWithParentChain>,
+        val datesWithOverdueTasks: List<Long>
     )
 
     private data class CoreDashboardData(
@@ -962,7 +1030,8 @@ class StudyViewModel(
         val userStats: UserStats,
         val dateSlices: List<SliceWithParentChain>,
         val overdueSlices: List<SliceWithParentChain>,
-        val todaySlices: List<SliceWithParentChain>
+        val todaySlices: List<SliceWithParentChain>,
+        val datesWithOverdueTasks: List<Long>
     )
 
     private data class AnalyticsAndChainsData(
@@ -986,6 +1055,8 @@ class StudyViewModel(
     )
 
     companion object {
+        const val ALL_OVERDUE_FILTER_EPOCH_DAY: Long = Long.MIN_VALUE
+
         fun provideFactory(
             repository: StudyRepository,
             firebaseSyncManager: FirebaseSyncManager? = null

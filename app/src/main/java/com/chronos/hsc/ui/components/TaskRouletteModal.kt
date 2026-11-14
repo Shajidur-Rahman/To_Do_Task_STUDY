@@ -1012,8 +1012,14 @@ fun TaskRouletteModal(
                                             activeExams.any { it.matchesSlice(candidate) } -> WorkloadBucket.BATCH_EXAM
                                             else -> WorkloadBucket.TODAY_NORMAL
                                         }
+                                        val daysOverdue = (todayEpoch - candidate.slice.scheduledDateEpochDay).coerceAtLeast(0L)
+                                        val effectiveLag = maxOf(candidate.slice.effectiveLagDays.toLong(), daysOverdue)
                                         val (badgeText, badgeBg, badgeTextColor) = when (bucket) {
-                                            WorkloadBucket.COMEBACK_LEFTOVER -> Triple("🔥 LAG", CyberCrimson.copy(alpha = 0.16f), CyberCrimson)
+                                            WorkloadBucket.COMEBACK_LEFTOVER -> Triple(
+                                                if (effectiveLag > 0L) "🔥 ${effectiveLag}d LAG" else "🔥 LAG",
+                                                CyberCrimson.copy(alpha = 0.16f),
+                                                CyberCrimson
+                                            )
                                             WorkloadBucket.BATCH_EXAM -> Triple("📝 EXAM", CyberAmber.copy(alpha = 0.16f), CyberAmber)
                                             WorkloadBucket.TODAY_NORMAL -> Triple("📅 TODAY", elevatedSurface, TextSecondary)
                                         }

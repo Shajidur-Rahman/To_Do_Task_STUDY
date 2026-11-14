@@ -62,6 +62,12 @@ class StudyRepository(
     fun observeOverdueSlices(todayEpochDay: Long): Flow<List<SliceWithParentChain>> =
         dao.observeOverdueSlices(todayEpochDay)
 
+    fun observeTodayAndAllUnfinishedPastSlices(todayEpochDay: Long): Flow<List<SliceWithParentChain>> =
+        dao.observeTodayAndAllUnfinishedPastSlices(todayEpochDay)
+
+    fun observeDatesWithOverdueTasks(todayEpochDay: Long): Flow<List<Long>> =
+        dao.observeDatesWithOverdueTasks(todayEpochDay)
+
     fun observeUpcomingEchoes(todayEpochDay: Long): Flow<List<SliceWithParentChain>> =
         dao.observeUpcomingEchoes(todayEpochDay)
 
@@ -1099,7 +1105,7 @@ class StudyRepository(
     }
 
     suspend fun getTodaySlicesSnapshot(todayEpochDay: Long): List<SliceWithParentChain> {
-        return dao.observeSlicesForDate(todayEpochDay).first()
+        return dao.observeTodayAndAllUnfinishedPastSlices(todayEpochDay).first()
     }
 
     suspend fun getOverdueSlicesSnapshot(todayEpochDay: Long): List<SliceWithParentChain> {

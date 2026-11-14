@@ -1,6 +1,6 @@
 {
-  "versionCode": 19,
-  "versionName": "1.4.0",
+  "versionCode": 20,
+  "versionName": "1.4.1",
   "apkUrl": "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/release/app-release.apk",
-  "releaseNotes": "Chronos HSC v1.4.0: Firebase Google Sign-In, Zero-Data-Loss Offline-to-Cloud Upload, Real-Time Multi-Device Sync across Phone & Tablet, Live Tombstone Propagation, and Full Reliability Polish."
+  "releaseNotes": "Chronos HSC v1.4.1: Eliminated overdue task hiding (unlimited past-due carryover with instant multi-day chain replacement), ALL OVERDUE Date Scrubber filter with unfinished-task counts, Individual Overdue Toggle Chip, and exact daysOverdue prioritization in AI Roulette."
 }
