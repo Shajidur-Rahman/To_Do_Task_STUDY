@@ -616,25 +616,38 @@ class StudyRepository(
      * Chain B and all downstream linked chains shift forward together, preserving the
      * whole syllabus pipeline without overlapping.
      */
-    suspend fun shiftDownstreamLinkedChains(chainId: String, deltaDays: Long): Int {
-        if (deltaDays <= 0L) return 0
+    suspend fun shiftDownstreamLinkedChains(
+        chainId: String,
+        deltaDays: Long,
+        resetLagBaseline: Boolean = false
+    ): Int {
+        if (deltaDays <= 0L && !resetLagBaseline) return 0
         var totalShifted = 0
         val downstreamChains = dao.getDownstreamLinkedChains(chainId)
         for (downstream in downstreamChains) {
             val incompleteSlices = dao.getIncompleteSlicesForChain(downstream.chainId)
             if (incompleteSlices.isNotEmpty()) {
                 val shiftedSlices = incompleteSlices.map { slice ->
-                    slice.copy(
-                        scheduledDateEpochDay = slice.scheduledDateEpochDay + deltaDays,
-                        shiftLagCount = slice.shiftLagCount + deltaDays.toInt()
-                    )
+                    val newDate = slice.scheduledDateEpochDay + deltaDays.coerceAtLeast(0L)
+                    if (resetLagBaseline) {
+                        slice.copy(
+                            scheduledDateEpochDay = newDate,
+                            originalScheduledEpochDay = newDate,
+                            shiftLagCount = 0
+                        )
+                    } else {
+                        slice.copy(
+                            scheduledDateEpochDay = newDate,
+                            shiftLagCount = slice.shiftLagCount + deltaDays.toInt()
+                        )
+                    }
                 }
                 dao.updateSlices(shiftedSlices)
                 shiftedSlices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
                 totalShifted += shiftedSlices.size
             }
             // Recurse to any chains linked to this downstream chain
-            totalShifted += shiftDownstreamLinkedChains(downstream.chainId, deltaDays)
+            totalShifted += shiftDownstreamLinkedChains(downstream.chainId, deltaDays, resetLagBaseline)
         }
         return totalShifted
     }
@@ -688,20 +701,46 @@ class StudyRepository(
      */
     suspend fun catchUpSliceToToday(sliceId: String, todayEpochDay: Long): Int {
         val targetSlice = dao.getSliceById(sliceId) ?: return 0
+        if (targetSlice.isRetentionEcho) {
+            val resolvedDate = maxOf(todayEpochDay, targetSlice.scheduledDateEpochDay)
+            val resetEcho = targetSlice.copy(
+                scheduledDateEpochDay = resolvedDate,
+                originalScheduledEpochDay = resolvedDate,
+                shiftLagCount = 0
+            )
+            dao.updateSlices(listOf(resetEcho))
+            syncMgr()?.recordSliceModified(resetEcho.sliceId)
+            syncOverdueBossShields(todayEpochDay)
+            syncMgr()?.scheduleCloudPush()
+            ChronosWidgetUpdater.requestUpdate(appContext)
+            return 1
+        }
+
         val chainId = targetSlice.chainId
-        val incomplete = dao.getIncompleteSlicesForChain(chainId)
+        val allIncomplete = dao.getIncompleteSlicesForChain(chainId)
+        val incompleteCore = allIncomplete
             .filter { !it.isRetentionEcho }
             .sortedBy { it.sliceNumber }
+        val incompleteEchoes = allIncomplete.filter { it.isRetentionEcho }
 
-        if (incomplete.isEmpty()) return 0
+        if (incompleteCore.isEmpty()) return 0
 
-        val targetIndex = incomplete.indexOfFirst { it.sliceId == sliceId }
-        val toReschedule = if (targetIndex >= 0) incomplete.subList(targetIndex, incomplete.size) else incomplete
+        val targetIndex = incompleteCore.indexOfFirst { it.sliceId == sliceId }
+        val firstLaggingIndex = incompleteCore.indexOfFirst {
+            it.scheduledDateEpochDay < todayEpochDay || it.effectiveLagDays > 0
+        }
+        val startIdx = when {
+            targetIndex >= 0 && firstLaggingIndex >= 0 -> minOf(targetIndex, firstLaggingIndex)
+            targetIndex >= 0 -> targetIndex
+            else -> 0
+        }
+        val toReschedule = incompleteCore.subList(startIdx, incompleteCore.size)
 
         var currentDate = todayEpochDay
-        val delta = (todayEpochDay - targetSlice.scheduledDateEpochDay).coerceAtLeast(0L)
+        val anchorOldDate = minOf(targetSlice.scheduledDateEpochDay, toReschedule.first().scheduledDateEpochDay)
+        val delta = (todayEpochDay - anchorOldDate).coerceAtLeast(0L)
 
-        val updated = toReschedule.map { slice ->
+        val updatedCore = toReschedule.map { slice ->
             val newSlice = slice.copy(
                 scheduledDateEpochDay = currentDate,
                 originalScheduledEpochDay = currentDate,
@@ -710,58 +749,132 @@ class StudyRepository(
             currentDate += 1L
             newSlice
         }
+        val resetEchoes = incompleteEchoes
+            .filter { it.scheduledDateEpochDay < todayEpochDay || it.effectiveLagDays > 0 }
+            .map { echo ->
+                val resolvedDate = maxOf(todayEpochDay, echo.scheduledDateEpochDay)
+                echo.copy(
+                    scheduledDateEpochDay = resolvedDate,
+                    originalScheduledEpochDay = resolvedDate,
+                    shiftLagCount = 0
+                )
+            }
+        val allUpdated = updatedCore + resetEchoes
 
-        dao.updateSlices(updated)
-        updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
-        if (delta > 0L) {
-            shiftDownstreamLinkedChains(chainId, delta)
-        }
+        dao.updateSlices(allUpdated)
+        allUpdated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+        shiftDownstreamLinkedChains(chainId, delta, resetLagBaseline = true)
         syncOverdueBossShields(todayEpochDay)
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
-        return updated.size
+        return allUpdated.size
     }
 
     /**
      * Instant Catch-Up All Chains:
-     * Re-baselines all lagging/overdue chains starting today so the student
-     * can start fresh without overdue backlog anxiety, maintaining sequential non-overlapping order
-     * for linked chapter chains.
+     * Re-baselines all lagging/overdue chains and retention echoes starting today so the
+     * student gets a clean Fresh Start with zero lingering lag debt, resolving linked chains
+     * topologically from parents to children without overlap.
      */
     suspend fun instantCatchUpAllLaggingChains(todayEpochDay: Long): Int {
         val allIncomplete = dao.getAllIncompleteSlicesOnce()
-            .filter { !it.isRetentionEcho && (it.scheduledDateEpochDay < todayEpochDay || it.shiftLagCount > 0) }
+        val laggingSlices = allIncomplete.filter {
+            it.scheduledDateEpochDay < todayEpochDay || it.effectiveLagDays > 0
+        }
 
-        if (allIncomplete.isEmpty()) return 0
+        if (laggingSlices.isEmpty()) return 0
 
-        val affectedChainIds = allIncomplete.map { it.chainId }.distinct()
+        val affectedChainIds = laggingSlices.map { it.chainId }.distinct()
+        val affectedSet = affectedChainIds.toSet()
+        val chainsById = affectedChainIds.mapNotNull { id ->
+            dao.getChainById(id)?.let { id to it }
+        }.toMap()
+
+        // Topological sort (parent-first) by linkedPreviousChainId
+        val orderedChainIds = mutableListOf<String>()
+        val remaining = affectedChainIds.toMutableList()
+        val visited = mutableSetOf<String>()
+        while (remaining.isNotEmpty()) {
+            val iter = remaining.iterator()
+            var progressed = false
+            while (iter.hasNext()) {
+                val id = iter.next()
+                val prevId = chainsById[id]?.linkedPreviousChainId
+                if (prevId == null || prevId !in affectedSet || prevId in visited) {
+                    orderedChainIds.add(id)
+                    visited.add(id)
+                    iter.remove()
+                    progressed = true
+                }
+            }
+            if (!progressed) {
+                val fallback = remaining.removeAt(0)
+                orderedChainIds.add(fallback)
+                visited.add(fallback)
+            }
+        }
+
         var count = 0
         val chainFinishDates = mutableMapOf<String, Long>()
 
-        for (chainId in affectedChainIds) {
-            val incompleteCore = dao.getIncompleteSlicesForChain(chainId)
+        for (chainId in orderedChainIds) {
+            val chainIncomplete = dao.getIncompleteSlicesForChain(chainId)
+            if (chainIncomplete.isEmpty()) continue
+
+            val incompleteCore = chainIncomplete
                 .filter { !it.isRetentionEcho }
                 .sortedBy { it.sliceNumber }
+            val laggingEchoes = chainIncomplete.filter {
+                it.isRetentionEcho && (it.scheduledDateEpochDay < todayEpochDay || it.effectiveLagDays > 0)
+            }
 
-            if (incompleteCore.isEmpty()) continue
+            val prevId = chainsById[chainId]?.linkedPreviousChainId
+            val parentFinish = if (prevId != null) {
+                chainFinishDates[prevId] ?: dao.getIncompleteSlicesForChain(prevId)
+                    .filter { !it.isRetentionEcho }
+                    .maxOfOrNull { it.scheduledDateEpochDay }
+            } else null
 
-            val parentChain = dao.getChainById(chainId)
-            val parentFinish = parentChain?.linkedPreviousChainId?.let { chainFinishDates[it] }
-            var currentDate = if (parentFinish != null) maxOf(todayEpochDay, parentFinish + 1L) else todayEpochDay
+            val shouldRescheduleCore = incompleteCore.isNotEmpty() && (
+                incompleteCore.any { it.scheduledDateEpochDay < todayEpochDay || it.effectiveLagDays > 0 } ||
+                    (parentFinish != null && incompleteCore.first().scheduledDateEpochDay <= parentFinish)
+                )
 
-            val updated = incompleteCore.map { slice ->
-                val newSlice = slice.copy(
-                    scheduledDateEpochDay = currentDate,
-                    originalScheduledEpochDay = currentDate,
+            val updatedCore = if (shouldRescheduleCore) {
+                var currentDate = if (parentFinish != null) maxOf(todayEpochDay, parentFinish + 1L) else todayEpochDay
+                val packed = incompleteCore.map { slice ->
+                    val newSlice = slice.copy(
+                        scheduledDateEpochDay = currentDate,
+                        originalScheduledEpochDay = currentDate,
+                        shiftLagCount = 0
+                    )
+                    currentDate += 1L
+                    newSlice
+                }
+                chainFinishDates[chainId] = currentDate - 1L
+                packed
+            } else {
+                incompleteCore.maxOfOrNull { it.scheduledDateEpochDay }?.let {
+                    chainFinishDates[chainId] = it
+                }
+                emptyList()
+            }
+
+            val updatedEchoes = laggingEchoes.map { echo ->
+                val resolvedDate = maxOf(todayEpochDay, echo.scheduledDateEpochDay)
+                echo.copy(
+                    scheduledDateEpochDay = resolvedDate,
+                    originalScheduledEpochDay = resolvedDate,
                     shiftLagCount = 0
                 )
-                currentDate += 1L
-                newSlice
             }
-            dao.updateSlices(updated)
-            updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
-            chainFinishDates[chainId] = currentDate - 1L
-            count += updated.size
+
+            val batchUpdates = updatedCore + updatedEchoes
+            if (batchUpdates.isNotEmpty()) {
+                dao.updateSlices(batchUpdates)
+                batchUpdates.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+                count += batchUpdates.size
+            }
         }
 
         syncOverdueBossShields(todayEpochDay)

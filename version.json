@@ -1,6 +1,6 @@
 {
-  "versionCode": 20,
-  "versionName": "1.4.1",
+  "versionCode": 21,
+  "versionName": "1.4.2",
   "apkUrl": "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/release/app-release.apk",
-  "releaseNotes": "Chronos HSC v1.4.1: Eliminated overdue task hiding (unlimited past-due carryover with instant multi-day chain replacement), ALL OVERDUE Date Scrubber filter with unfinished-task counts, Individual Overdue Toggle Chip, and exact daysOverdue prioritization in AI Roulette."
+  "releaseNotes": "Chronos HSC v1.4.2: Fixed Catch-Up Engine cleanly clearing all lingering +LAG badges across core slices, retention echoes, originalScheduledEpochDay drift, and linked downstream chains without re-injecting lag; hardened Firebase conflict merge; and added 1-tap Catch Up All triggers directly in the Domino Conflict banner and Today's Battleground."
 }

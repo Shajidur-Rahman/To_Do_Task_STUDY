@@ -688,7 +688,7 @@ private fun TodayBattlegroundTab(
                 }
             }
 
-            // 3. 1-Tap Domino Shift Conflict Banner (When past slices are unfinished)
+            // 3. 1-Tap Domino Shift Conflict Banner (When past slices are unfinished) or 1-Tap Clear Lag Banner
             if (state.overdueSlices.isNotEmpty()) {
                 item {
                     val hasMultiDayOverdueChains = state.overdueSlices.size > state.overdueChainsCount ||
@@ -701,8 +701,45 @@ private fun TodayBattlegroundTab(
                         hasMultiDayOverdueChains = hasMultiDayOverdueChains,
                         showAllOverdueIndividually = state.showAllOverdueIndividually,
                         onToggleShowAllOverdueIndividually = onToggleShowAllOverdueIndividually,
-                        onExecuteDominoShift = onExecuteDominoShift
+                        onExecuteDominoShift = onExecuteDominoShift,
+                        onInstantCatchUpAll = onInstantCatchUpAll
                     )
+                }
+            } else {
+                val laggingCount = state.allChainsWithSlices.sumOf { group ->
+                    group.slices.count { slice ->
+                        !slice.isCompleted && (slice.scheduledDateEpochDay < state.todayEpochDay || slice.effectiveLagDays > 0)
+                    }
+                }
+                if (laggingCount > 0) {
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isNature) CyberAmber.copy(alpha = 0.14f) else Color(0xFF18181B),
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (isNature) CyberAmber.copy(alpha = 0.7f) else Color(0xFF3F3F46)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onInstantCatchUpAll() }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "⚡ $laggingCount Slice${if (laggingCount > 1) "s" else ""} Carrying +LAG • Tap to Catch Up All (Clear Lag)",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (isNature) CyberAmber else Color.White
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1579,7 +1616,8 @@ private fun DominoConflictBanner(
     hasMultiDayOverdueChains: Boolean,
     showAllOverdueIndividually: Boolean,
     onToggleShowAllOverdueIndividually: () -> Unit,
-    onExecuteDominoShift: () -> Unit
+    onExecuteDominoShift: () -> Unit,
+    onInstantCatchUpAll: () -> Unit = {}
 ) {
     val isNature = LocalAppThemeMode.current == AppThemeMode.NATURE_LOVER
     val infiniteTransition = rememberInfiniteTransition(label = "dominoAlertPulse")
@@ -1667,6 +1705,28 @@ private fun DominoConflictBanner(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "1-Tap Domino Shift ($overdueChainsCount Chain${if (overdueChainsCount > 1) "s" else ""} -> Cascade Forward)",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Button(
+                onClick = onInstantCatchUpAll,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isNature) NatureLeafGreen.copy(alpha = 0.16f) else CyberAmber.copy(alpha = 0.14f),
+                    contentColor = if (isNature) NatureLeafGreen else CyberAmber
+                ),
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = (if (isNature) NatureLeafGreen else CyberAmber).copy(alpha = 0.7f)
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "⚡ Catch Up All (Clear Lag & Fresh Start)",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 12.sp
                 )
