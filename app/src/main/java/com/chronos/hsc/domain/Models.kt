@@ -4,11 +4,13 @@ import com.chronos.hsc.data.local.DailyTaskSlice
 import com.chronos.hsc.data.local.HscSubject
 import com.chronos.hsc.data.local.NeuroSessionEntity
 import com.chronos.hsc.data.local.StudyTopicChain
+import com.chronos.hsc.data.store.CustomSubjectLink
 import java.time.LocalDate
 
 data class DeletedChainSnapshot(
     val chain: StudyTopicChain,
-    val slices: List<DailyTaskSlice>
+    val slices: List<DailyTaskSlice>,
+    val customSubjectLink: CustomSubjectLink? = null
 )
 
 data class DominoShiftResult(

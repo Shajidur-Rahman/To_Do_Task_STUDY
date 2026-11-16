@@ -19,6 +19,7 @@ import com.chronos.hsc.data.local.TopicChainWithSlices
 import com.chronos.hsc.data.local.UserStats
 import com.chronos.hsc.data.store.CustomSubjectAndAiStore
 import com.chronos.hsc.data.store.BatchExamRecord
+import com.chronos.hsc.data.store.BatchExamStore
 import com.chronos.hsc.data.sync.FirebaseSyncManager
 import com.chronos.hsc.domain.DeletedChainSnapshot
 import com.chronos.hsc.domain.DominoShiftResult
@@ -301,16 +302,21 @@ class StudyRepository(
         linkedPreviousChainId: String? = null,
         customSubjectId: String? = null
     ): StudyTopicChain {
-        val effectivePaper = if (subject.isSinglePaperOnly) HscPaper.SINGLE else paper
+        val customSub = customSubjectId?.let { CustomSubjectAndAiStore.getCustomSubject(it) }
+        val isSinglePaper = if (customSub != null) !customSub.hasSecondPaper else subject.isSinglePaperOnly
+        val effectivePaper = if (isSinglePaper) HscPaper.SINGLE else paper
         val safeTotalDays = totalDays.coerceIn(1, 15)
         val safeChapterNo = chapterNumber.coerceIn(1, 15)
         val cleanChapterName = chapterName.trim().ifEmpty {
-            HscSyllabusCatalog.getChapterNameBangla(subject, effectivePaper, safeChapterNo)
+            if (customSub != null) {
+                "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(safeChapterNo)}"
+            } else {
+                HscSyllabusCatalog.getChapterNameBangla(subject, effectivePaper, safeChapterNo)
+            }
         }
         val chainId = UUID.randomUUID().toString()
         val bossMaxHp = safeTotalDays * 100
 
-        val customSub = customSubjectId?.let { CustomSubjectAndAiStore.getCustomSubject(it) }
         if (customSub != null) {
             CustomSubjectAndAiStore.linkChainToCustomSubject(chainId, customSub.id)
         }
@@ -453,9 +459,11 @@ class StudyRepository(
      */
     suspend fun deleteEntireTopicChainWithSnapshot(chainId: String): DeletedChainSnapshot? {
         val current = dao.getChainWithSlices(chainId) ?: return null
+        val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(chainId)
         val snapshot = DeletedChainSnapshot(
             chain = current.chain,
-            slices = current.slices
+            slices = current.slices,
+            customSubjectLink = customLink
         )
         dao.deleteTopicChainById(chainId)
         syncMgr()?.recordDeletedChainTombstone(chainId, current.slices.map { it.sliceId })
@@ -470,6 +478,7 @@ class StudyRepository(
      */
     suspend fun restoreDeletedChainSnapshot(snapshot: DeletedChainSnapshot) {
         dao.insertChainWithSlices(snapshot.chain, snapshot.slices)
+        snapshot.customSubjectLink?.let { CustomSubjectAndAiStore.linkChainToCustomSubject(it) }
         syncMgr()?.removeChainTombstonesForRestore(
             chainId = snapshot.chain.chainId,
             sliceIds = snapshot.slices.map { it.sliceId }
@@ -483,16 +492,19 @@ class StudyRepository(
     /**
      * Delete Only This Slice & Re-Index:
      * Deletes only the clicked slice and re-numbers subsequent slices
-     * (e.g., 4-3 becomes 4-2, pulling their scheduled dates back by 1 day).
+     * (e.g., 4-3 becomes 4-2), preserving Custom Subject naming/badges and never
+     * pulling today/future tasks backwards into yesterday.
      */
     suspend fun deleteSingleSliceAndReindex(sliceId: String): Int {
         val targetSlice = dao.getSliceById(sliceId) ?: return 0
         val chainWithSlices = dao.getChainWithSlices(targetSlice.chainId) ?: return 0
         val parent = chainWithSlices.chain
+        val todayEpochDay = LocalDate.now().toEpochDay()
 
         if (targetSlice.isRetentionEcho) {
             dao.deleteSliceById(sliceId)
             syncMgr()?.recordDeletedSliceTombstone(sliceId)
+            syncOverdueBossShields(todayEpochDay)
             syncMgr()?.scheduleCloudPush()
             ChronosWidgetUpdater.requestUpdate(appContext)
             return 0
@@ -515,33 +527,57 @@ class StudyRepository(
         dao.deleteSliceById(sliceId)
         syncMgr()?.recordDeletedSliceTombstone(sliceId)
 
+        val customSub = CustomSubjectAndAiStore.getCustomSubjectForChain(parent.chainId)
+        val bnCh = HscSyllabusCatalog.toBanglaDigits(parent.chapterNumber)
         val newTotalDays = max(1, remainingCoreSlices.size)
         val reindexedSlices = remainingCoreSlices.mapIndexed { idx, slice ->
             val newSliceNumber = idx + 1
             val wasAfterDeleted = slice.sliceNumber > targetSlice.sliceNumber
             val updatedEpochDay = if (wasAfterDeleted && !slice.isCompleted) {
-                slice.scheduledDateEpochDay - 1L
+                val pulled = slice.scheduledDateEpochDay - 1L
+                if (slice.scheduledDateEpochDay >= todayEpochDay) maxOf(todayEpochDay, pulled) else pulled
             } else {
                 slice.scheduledDateEpochDay
             }
-            slice.copy(
-                sliceNumber = newSliceNumber,
-                totalSlicesInChain = newTotalDays,
-                displayTitle = formatSliceDisplayTitle(
+            val displayTitleStr = if (customSub != null) {
+                val paperSuffix = if (customSub.hasSecondPaper && parent.paper != HscPaper.SINGLE) {
+                    " ${parent.paper.compactTitleLabel}"
+                } else ""
+                val bnSlice = HscSyllabusCatalog.toBanglaDigits(newSliceNumber)
+                "${customSub.customSubjectName}$paperSuffix • অধ্যায় $bnCh ($bnSlice): ${parent.chapterName}"
+            } else {
+                formatSliceDisplayTitle(
                     subject = parent.subject,
                     paper = parent.paper,
                     chapterNumber = parent.chapterNumber,
                     sliceNumber = newSliceNumber,
                     chapterName = parent.chapterName
-                ),
-                shortBadge = formatShortBadge(
+                )
+            }
+            val shortBadgeStr = if (customSub != null) {
+                val paperCode = if (customSub.hasSecondPaper && parent.paper != HscPaper.SINGLE) parent.paper.shortCode else ""
+                "${customSub.customShortCode}$paperCode Ch ${parent.chapterNumber}-$newSliceNumber"
+            } else {
+                formatShortBadge(
                     subject = parent.subject,
                     paper = parent.paper,
                     chapterNumber = parent.chapterNumber,
                     sliceNumber = newSliceNumber
-                ),
-                phaseTag = parent.distributionCurve.phaseTagForDay(newSliceNumber, newTotalDays),
-                scheduledDateEpochDay = updatedEpochDay
+                )
+            }
+            val preservedPhaseTag = if (slice.phaseTag.startsWith("Light Review", ignoreCase = true)) {
+                slice.phaseTag
+            } else {
+                parent.distributionCurve.phaseTagForDay(newSliceNumber, newTotalDays)
+            }
+            slice.copy(
+                sliceNumber = newSliceNumber,
+                totalSlicesInChain = newTotalDays,
+                displayTitle = displayTitleStr,
+                shortBadge = shortBadgeStr,
+                phaseTag = preservedPhaseTag,
+                scheduledDateEpochDay = updatedEpochDay,
+                originalScheduledEpochDay = if (wasAfterDeleted && !slice.isCompleted) updatedEpochDay else slice.originalScheduledEpochDay
             )
         }
 
@@ -550,7 +586,11 @@ class StudyRepository(
             reindexedSlices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
         }
 
-        val allRemainingDone = reindexedSlices.isNotEmpty() && reindexedSlices.all { it.isCompleted }
+        val allRemainingDone = if (reindexedSlices.isNotEmpty()) {
+            reindexedSlices.all { it.isCompleted }
+        } else {
+            true
+        }
         dao.updateChain(
             parent.copy(
                 totalDays = newTotalDays,
@@ -559,17 +599,47 @@ class StudyRepository(
             )
         )
         syncMgr()?.recordChainModified(parent.chainId)
+        syncOverdueBossShields(todayEpochDay)
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return subsequentSlicesCount
     }
 
+    private fun sortChainIdsTopologically(
+        chainIds: List<String>,
+        chainsById: Map<String, StudyTopicChain>
+    ): List<String> {
+        val affectedSet = chainIds.toSet()
+        val orderedChainIds = mutableListOf<String>()
+        val remaining = chainIds.toMutableList()
+        val visited = mutableSetOf<String>()
+        while (remaining.isNotEmpty()) {
+            val iter = remaining.iterator()
+            var progressed = false
+            while (iter.hasNext()) {
+                val id = iter.next()
+                val prevId = chainsById[id]?.linkedPreviousChainId
+                if (prevId == null || prevId !in affectedSet || prevId in visited) {
+                    orderedChainIds.add(id)
+                    visited.add(id)
+                    iter.remove()
+                    progressed = true
+                }
+            }
+            if (!progressed) {
+                val fallback = remaining.removeAt(0)
+                orderedChainIds.add(fallback)
+                visited.add(fallback)
+            }
+        }
+        return orderedChainIds
+    }
+
     /**
      * The "Domino / Auto-Shift" Engine:
-     * Groups incomplete slices by chainId ordered by sliceNumber ASC.
-     * For each chain with overdue slices, calculates delta = todayEpochDay - earliestIncompleteSlice.scheduledDateEpochDay
-     * and adds delta to scheduledDateEpochDay for EVERY incomplete slice in that chain,
-     * keeping the sequence intact without stacking 4-2 and 4-3 on the same day.
+     * Groups incomplete slices by chainId ordered topologically (parent chains first),
+     * shifts missed slices forward to start cleanly from Today (preserving parent-child order
+     * and zeroing lag baseline so Domino Shift never leaves +LAG debt badges behind).
      */
     suspend fun executeDominoShift(todayEpochDay: Long): DominoShiftResult {
         val overdueSlices = dao.getOverdueIncompleteSlicesOnce(todayEpochDay)
@@ -578,10 +648,14 @@ class StudyRepository(
             return DominoShiftResult(0, 0)
         }
 
-        val affectedChainIds = overdueSlices.map { it.chainId }.distinct()
+        val rawAffectedChainIds = overdueSlices.map { it.chainId }.distinct()
+        val chainsById = dao.getAllChainsOnce().associateBy { it.chainId }
+        val orderedChainIds = sortChainIdsTopologically(rawAffectedChainIds, chainsById)
+        val affectedSet = orderedChainIds.toSet()
         var totalSlicesShifted = 0
+        val chainFinishDates = mutableMapOf<String, Long>()
 
-        for (chainId in affectedChainIds) {
+        for (chainId in orderedChainIds) {
             val incompleteChainSlices = dao.getIncompleteSlicesForChain(chainId)
             if (incompleteChainSlices.isEmpty()) continue
 
@@ -589,27 +663,65 @@ class StudyRepository(
                 .filter { !it.isRetentionEcho }
                 .sortedBy { it.sliceNumber }
 
+            val prevId = chainsById[chainId]?.linkedPreviousChainId
+            val parentFinish = if (prevId != null) {
+                chainFinishDates[prevId] ?: dao.getIncompleteSlicesForChain(prevId)
+                    .filter { !it.isRetentionEcho }
+                    .maxOfOrNull { it.scheduledDateEpochDay }
+            } else null
+
             if (coreIncomplete.isNotEmpty()) {
                 val earliestOverdue = coreIncomplete.firstOrNull { it.scheduledDateEpochDay < todayEpochDay }
-                if (earliestOverdue != null) {
-                    val delta = todayEpochDay - earliestOverdue.scheduledDateEpochDay
-                    if (delta > 0) {
-                        var previousDate = todayEpochDay - 1L
-                        val shiftedCore = coreIncomplete.map { slice ->
-                            val candidateDate = slice.scheduledDateEpochDay + delta
-                            val resolvedDate = max(candidateDate, previousDate + 1L)
-                            previousDate = resolvedDate
-                            slice.copy(
-                                scheduledDateEpochDay = resolvedDate,
-                                originalScheduledEpochDay = resolvedDate,
-                                shiftLagCount = 0
-                            )
-                        }
-                        dao.updateSlices(shiftedCore)
-                        shiftedCore.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
-                        totalSlicesShifted += shiftedCore.size
-                        totalSlicesShifted += shiftDownstreamLinkedChains(chainId, delta, resetLagBaseline = true)
+                val minStartDate = if (parentFinish != null) maxOf(todayEpochDay, parentFinish + 1L) else todayEpochDay
+                val firstDate = coreIncomplete.first().scheduledDateEpochDay
+                val delta = when {
+                    earliestOverdue != null -> maxOf(0L, todayEpochDay - earliestOverdue.scheduledDateEpochDay)
+                    firstDate < minStartDate -> minStartDate - firstDate
+                    else -> 0L
+                }
+                if (delta > 0L || firstDate < minStartDate) {
+                    var previousDate = minStartDate - 1L
+                    val shiftedCore = coreIncomplete.map { slice ->
+                        val candidateDate = slice.scheduledDateEpochDay + delta
+                        val resolvedDate = max(candidateDate, previousDate + 1L)
+                        previousDate = resolvedDate
+                        slice.copy(
+                            scheduledDateEpochDay = resolvedDate,
+                            originalScheduledEpochDay = resolvedDate,
+                            shiftLagCount = 0
+                        )
                     }
+                    dao.updateSlices(shiftedCore)
+                    shiftedCore.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+                    totalSlicesShifted += shiftedCore.size
+                    chainFinishDates[chainId] = previousDate
+                    // Shift only downstream chains NOT already in orderedChainIds (so ordered children aren't double-shifted)
+                    val nonAffectedDownstream = dao.getDownstreamLinkedChains(chainId)
+                        .filter { it.chainId !in affectedSet }
+                    for (downstream in nonAffectedDownstream) {
+                        val downstreamIncomplete = dao.getIncompleteSlicesForChain(downstream.chainId)
+                            .sortedBy { it.sliceNumber }
+                        val downstreamStart = downstreamIncomplete.firstOrNull()?.scheduledDateEpochDay
+                        if (downstreamStart != null && (delta > 0L || downstreamStart <= previousDate)) {
+                            val dShift = maxOf(delta, (previousDate + 1L) - downstreamStart)
+                            if (dShift > 0L) {
+                                val updatedDown = downstreamIncomplete.map { slice ->
+                                    val newDate = slice.scheduledDateEpochDay + dShift
+                                    slice.copy(
+                                        scheduledDateEpochDay = newDate,
+                                        originalScheduledEpochDay = newDate,
+                                        shiftLagCount = 0
+                                    )
+                                }
+                                dao.updateSlices(updatedDown)
+                                updatedDown.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+                                totalSlicesShifted += updatedDown.size
+                                totalSlicesShifted += shiftDownstreamLinkedChains(downstream.chainId, dShift, resetLagBaseline = true)
+                            }
+                        }
+                    }
+                } else {
+                    chainFinishDates[chainId] = coreIncomplete.maxOf { it.scheduledDateEpochDay }
                 }
             }
 
@@ -636,7 +748,7 @@ class StudyRepository(
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return DominoShiftResult(
-            shiftedChainsCount = affectedChainIds.size,
+            shiftedChainsCount = rawAffectedChainIds.size,
             shiftedSlicesCount = totalSlicesShifted
         )
     }
@@ -819,10 +931,29 @@ class StudyRepository(
 
         if (laggingSlices.isEmpty()) return 0
 
-        val affectedChainIds = laggingSlices.map { it.chainId }.distinct()
-        val affectedSet = affectedChainIds.toSet()
+        val allChainsMap = dao.getAllChainsOnce().associateBy { it.chainId }
+        val childrenByParent = allChainsMap.values
+            .filter { it.linkedPreviousChainId != null }
+            .groupBy { it.linkedPreviousChainId!! }
+
+        val seedIds = laggingSlices.map { it.chainId }.distinct()
+        val affectedSet = linkedSetOf<String>()
+        val bfsQueue = ArrayDeque<String>()
+        for (id in seedIds) {
+            if (affectedSet.add(id)) bfsQueue.add(id)
+        }
+        while (bfsQueue.isNotEmpty()) {
+            val currentId = bfsQueue.removeFirst()
+            for (child in childrenByParent[currentId].orEmpty()) {
+                if (affectedSet.add(child.chainId)) {
+                    bfsQueue.add(child.chainId)
+                }
+            }
+        }
+
+        val affectedChainIds = affectedSet.toList()
         val chainsById = affectedChainIds.mapNotNull { id ->
-            dao.getChainById(id)?.let { id to it }
+            allChainsMap[id]?.let { id to it }
         }.toMap()
 
         // Topological sort (parent-first) by linkedPreviousChainId
@@ -1004,6 +1135,7 @@ class StudyRepository(
             )
         }
 
+        val todayEpochDay = LocalDate.now().toEpochDay()
         val remainingProblemXp = max(0, slice.problemsTarget - slice.problemsCompleted) * 10
         val baseCompletionXp = 50
         val totalSliceXp = (baseCompletionXp + remainingProblemXp) * slice.xpMultiplier
@@ -1022,10 +1154,23 @@ class StudyRepository(
         val allCoreCompleted = coreSlicesAfterUpdate.isNotEmpty() && coreSlicesAfterUpdate.all { it.isCompleted }
 
         val didConquerFinalCoreSlice = !slice.isRetentionEcho &&
-            (slice.sliceNumber == slice.totalSlicesInChain || allCoreCompleted)
+            allCoreCompleted &&
+            !parentChain.isChainCompleted &&
+            chainWithSlices.echoSlices.isEmpty()
+
+        val remainingOverdueCount = (coreSlicesAfterUpdate + chainWithSlices.echoSlices.map {
+            if (it.sliceId == slice.sliceId) completedSlice else it
+        }).count { !it.isCompleted && it.scheduledDateEpochDay < todayEpochDay }
+        val updatedShield = if (remainingOverdueCount > 0) {
+            (parentChain.bossMaxHp * 0.10f * remainingOverdueCount)
+                .roundToInt()
+                .coerceAtLeast(parentChain.bossMaxHp / 10)
+        } else {
+            0
+        }
 
         val updatedChain = parentChain.copy(
-            bossBonusShieldHp = 0, // Completing a slice shatters the purple overdue shield
+            bossBonusShieldHp = updatedShield,
             isChainCompleted = allCoreCompleted
         )
         dao.updateChain(updatedChain)
@@ -1049,7 +1194,7 @@ class StudyRepository(
     /**
      * Slide-to-Left / Revert Task Completion (Undone):
      * Restores a completed slice back to incomplete, resets completion timestamp,
-     * adjusts user XP (-50 XP), and re-opens parent chain if needed.
+     * deducts completion/boss XP cleanly, and re-syncs parent chain status & shields.
      */
     suspend fun uncompleteTaskSlice(sliceId: String): DailyTaskSlice? {
         val slice = dao.getSliceById(sliceId) ?: return null
@@ -1062,6 +1207,7 @@ class StudyRepository(
         dao.updateSlice(uncompletedSlice)
         syncMgr()?.recordSliceModified(sliceId)
 
+        var reopenedChain = false
         val chainWithSlices = dao.getChainWithSlices(slice.chainId)
         if (chainWithSlices != null) {
             val parentChain = chainWithSlices.chain
@@ -1069,13 +1215,16 @@ class StudyRepository(
             if (hasIncompleteCore && parentChain.isChainCompleted) {
                 dao.updateChain(parentChain.copy(isChainCompleted = false))
                 syncMgr()?.recordChainModified(parentChain.chainId)
+                reopenedChain = true
             }
         }
 
-        // Deduct base slice XP
+        // Deduct base slice XP + boss bonus XP if reverting the conquered chain completion
         val baseCompletionXp = 50 * slice.xpMultiplier
-        awardXp(-baseCompletionXp)
+        val bossBonusDeduction = if (reopenedChain) 100 else 0
+        awardXp(-(baseCompletionXp + bossBonusDeduction))
 
+        syncOverdueBossShields(LocalDate.now().toEpochDay())
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
         return uncompletedSlice
@@ -1092,27 +1241,39 @@ class StudyRepository(
         confidenceRating: ConfidenceRating,
         fromEpochDay: Long = LocalDate.now().toEpochDay()
     ): List<DailyTaskSlice> {
-        val parent = dao.getChainById(chainId) ?: return emptyList()
-        val paperPrefix = if (parent.subject.isSinglePaperOnly || parent.paper == HscPaper.SINGLE) {
-            parent.subject.fullName
+        val chainWithSlices = dao.getChainWithSlices(chainId) ?: return emptyList()
+        if (chainWithSlices.echoSlices.isNotEmpty()) return emptyList()
+        val parent = chainWithSlices.chain
+        val customSub = CustomSubjectAndAiStore.getCustomSubjectForChain(chainId)
+        val isSinglePaper = if (customSub != null) !customSub.hasSecondPaper else parent.subject.isSinglePaperOnly
+        val subjectFullName = customSub?.customSubjectName ?: parent.subject.fullName
+        val subjectShortCode = customSub?.customShortCode ?: parent.subject.shortCode
+        val paperPrefix = if (isSinglePaper || parent.paper == HscPaper.SINGLE) {
+            subjectFullName
         } else {
-            "${parent.subject.fullName} ${parent.paper.compactTitleLabel}"
+            "$subjectFullName ${parent.paper.compactTitleLabel}"
         }
+        val shortPaperCode = if (isSinglePaper || parent.paper == HscPaper.SINGLE) "" else parent.paper.shortCode
         val resolvedTopic = parent.chapterName.trim().ifEmpty {
-            HscSyllabusCatalog.getChapterNameBangla(parent.subject, parent.paper, parent.chapterNumber)
+            if (customSub != null) {
+                "অধ্যায় ${HscSyllabusCatalog.toBanglaDigits(parent.chapterNumber)}"
+            } else {
+                HscSyllabusCatalog.getChapterNameBangla(parent.subject, parent.paper, parent.chapterNumber)
+            }
         }
         val bnCh = HscSyllabusCatalog.toBanglaDigits(parent.chapterNumber)
 
         val echoes = confidenceRating.intervalsInDays.mapIndexed { index, intervalDays ->
+            val echoDate = fromEpochDay + intervalDays.toLong()
             DailyTaskSlice(
                 sliceId = UUID.randomUUID().toString(),
                 chainId = parent.chainId,
                 sliceNumber = parent.totalDays + index + 1,
                 totalSlicesInChain = parent.totalDays,
                 displayTitle = "$paperPrefix • অধ্যায় $bnCh: $resolvedTopic (Echo +${intervalDays}d)",
-                shortBadge = "${parent.subject.shortCode}${parent.paper.shortCode} Ch ${parent.chapterNumber} ⟳+${intervalDays}d",
+                shortBadge = "$subjectShortCode$shortPaperCode Ch ${parent.chapterNumber} ⟳+${intervalDays}d",
                 phaseTag = "Retention Echo (+${intervalDays}d • 15m)",
-                scheduledDateEpochDay = fromEpochDay + intervalDays.toLong(),
+                scheduledDateEpochDay = echoDate,
                 problemsCompleted = 0,
                 problemsTarget = 3,
                 isCompleted = false,
@@ -1120,7 +1281,9 @@ class StudyRepository(
                 isRetentionEcho = true,
                 echoIntervalDays = intervalDays,
                 sliceEnergyOverride = EnergyLevel.ZOMBIE_MODE,
-                xpMultiplier = 1
+                xpMultiplier = 1,
+                originalScheduledEpochDay = echoDate,
+                shiftLagCount = 0
             )
         }
 
@@ -1164,8 +1327,18 @@ class StudyRepository(
         }
     }
 
+    suspend fun clearRouletteSprintMultiplier(sliceId: String) {
+        val slice = dao.getSliceById(sliceId) ?: return
+        if (!slice.isCompleted && slice.xpMultiplier > 1) {
+            dao.updateSlice(slice.copy(xpMultiplier = 1))
+            syncMgr()?.recordSliceModified(sliceId)
+            syncMgr()?.scheduleCloudPush()
+            ChronosWidgetUpdater.requestUpdate(appContext)
+        }
+    }
+
     private suspend fun awardXp(xpDelta: Int) {
-        if (xpDelta <= 0) return
+        if (xpDelta == 0) return
         val today = LocalDate.now().toEpochDay()
         val current = dao.getUserStatsOnce() ?: UserStats(
             id = 1,
@@ -1174,22 +1347,31 @@ class StudyRepository(
             streakDays = 0,
             lastStudyEpochDay = null
         )
-        val newXp = current.totalXp + xpDelta
+        val newXp = (current.totalXp + xpDelta).coerceAtLeast(0)
         val newLevel = (newXp / 500) + 1
-        val newStreak = when (current.lastStudyEpochDay) {
-            null -> 1
-            today -> max(1, current.streakDays)
-            today - 1L -> current.streakDays + 1
-            else -> 1
-        }
-        dao.upsertUserStats(
-            current.copy(
-                totalXp = newXp,
-                currentLevel = newLevel,
-                streakDays = newStreak,
-                lastStudyEpochDay = today
+        if (xpDelta > 0) {
+            val newStreak = when (current.lastStudyEpochDay) {
+                null -> 1
+                today -> max(1, current.streakDays)
+                today - 1L -> current.streakDays + 1
+                else -> 1
+            }
+            dao.upsertUserStats(
+                current.copy(
+                    totalXp = newXp,
+                    currentLevel = newLevel,
+                    streakDays = newStreak,
+                    lastStudyEpochDay = today
+                )
             )
-        )
+        } else {
+            dao.upsertUserStats(
+                current.copy(
+                    totalXp = newXp,
+                    currentLevel = newLevel
+                )
+            )
+        }
         syncMgr()?.scheduleCloudPush()
     }
 
@@ -1205,13 +1387,16 @@ class StudyRepository(
         val neuroSessions = dao.getAllNeuroSessionsOnce()
 
         ChronosFullBackupDto(
-            backupVersion = 1,
+            backupVersion = 2,
             exportTimestamp = System.currentTimeMillis(),
             userStats = userStats,
             chains = chains,
             slices = slices,
             exams = exams,
-            neuroSessions = neuroSessions
+            neuroSessions = neuroSessions,
+            customSubjectsJson = CustomSubjectAndAiStore.exportCustomSubjectsJson(),
+            chainLinksJson = CustomSubjectAndAiStore.exportChainLinksJson(),
+            batchExamsJson = BatchExamStore.exportToJsonString()
         )
     }
 
@@ -1234,6 +1419,10 @@ class StudyRepository(
             val jsonString = inputStream.bufferedReader().use { it.readText() }
             val backupDto = ChronosFullBackupDto.fromJsonString(jsonString)
 
+            val prevChainIds = dao.getAllChainsOnce().map { it.chainId }
+            val prevSliceIds = dao.getAllSlicesOnce().map { it.sliceId }
+            val prevExamIds = dao.getAllExamsOnce().map { it.examId }
+
             dao.restoreFullDatabase(
                 userStats = backupDto.userStats,
                 chains = backupDto.chains,
@@ -1242,6 +1431,30 @@ class StudyRepository(
                 neuroSessions = backupDto.neuroSessions
             )
 
+            backupDto.customSubjectsJson?.let { raw ->
+                CustomSubjectAndAiStore.replaceAllCustomSubjectsFromSync(
+                    CustomSubjectAndAiStore.parseCustomSubjectsJson(raw)
+                )
+            }
+            backupDto.chainLinksJson?.let { raw ->
+                CustomSubjectAndAiStore.replaceAllChainLinksFromSync(
+                    CustomSubjectAndAiStore.parseChainLinksJson(raw)
+                )
+            }
+            backupDto.batchExamsJson?.let { raw ->
+                BatchExamStore.replaceAllFromSync(
+                    BatchExamStore.parseJsonArray(raw)
+                )
+            }
+
+            syncMgr()?.clearTombstonesForFullRestore(
+                restoredChainIds = backupDto.chains.map { it.chainId },
+                restoredSliceIds = backupDto.slices.map { it.sliceId },
+                restoredExamIds = backupDto.exams.map { it.examId },
+                wipedChainIds = prevChainIds,
+                wipedSliceIds = prevSliceIds,
+                wipedExamIds = prevExamIds
+            )
             backupDto.chains.forEach { syncMgr()?.recordChainModified(it.chainId) }
             backupDto.slices.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
             syncMgr()?.scheduleCloudPush()

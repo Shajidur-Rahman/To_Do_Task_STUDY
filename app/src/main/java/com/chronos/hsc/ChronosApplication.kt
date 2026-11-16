@@ -15,7 +15,15 @@ class ChronosApplication : Application() {
         com.chronos.hsc.data.store.BatchExamStore.init(this)
         container.firebaseSyncManager.initializeOnAppStart()
         com.chronos.hsc.notification.ChronosNotificationHelper.createNotificationChannels(this)
-        com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDailyBriefing(this, enabled = true, forceUpdate = false)
-        com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDominoAlerts(this, enabled = true, forceUpdate = false)
+        com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDailyBriefing(
+            this,
+            enabled = com.chronos.hsc.notification.ChronosWorkScheduler.isMorningBriefingEnabled(this),
+            forceUpdate = false
+        )
+        com.chronos.hsc.notification.ChronosWorkScheduler.scheduleDominoAlerts(
+            this,
+            enabled = com.chronos.hsc.notification.ChronosWorkScheduler.isDominoAlertsEnabled(this),
+            forceUpdate = false
+        )
     }
 }

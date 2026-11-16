@@ -431,8 +431,8 @@ fun MainScreen(
                 todayEpochDay = state.todayEpochDay,
                 userStats = state.userStats,
                 pinnedExam = state.pinnedExam,
-                completedSlicesCount = state.visibleDateSlices.count { it.slice.isCompleted },
-                totalProblemsToday = state.visibleDateSlices.sumOf { it.slice.problemsCompleted },
+                completedSlicesCount = state.todaySlices.count { it.slice.isCompleted },
+                totalProblemsToday = state.todaySlices.sumOf { it.slice.problemsCompleted },
                 activeBossesCount = state.allChainsWithSlices.count { !it.chain.isChainCompleted },
                 onDismiss = viewModel::closeAccountabilityModal,
                 onExportBackup = { uri ->
@@ -682,6 +682,7 @@ private fun TodayBattlegroundTab(
                             sprintTitle = sprint.targetSliceTitle,
                             isPaused = sprint.isSprintPaused,
                             secondsRemaining = sprint.sprintSecondsRemaining,
+                            has2xMultiplier = sprint.has2xMultiplier,
                             onOpenSprintModal = onOpenRoulette
                         )
                     }
@@ -1558,6 +1559,7 @@ private fun ActiveSprintBanner(
     sprintTitle: String,
     isPaused: Boolean,
     secondsRemaining: Int,
+    has2xMultiplier: Boolean,
     onOpenSprintModal: () -> Unit
 ) {
     val mins = secondsRemaining / 60
@@ -1581,8 +1583,10 @@ private fun ActiveSprintBanner(
                 Text(
                     text = if (isPaused) {
                         "⏸️ 25m ROULETTE MICRO-SPRINT PAUSED"
-                    } else {
+                    } else if (has2xMultiplier) {
                         "⚡ 25m ROULETTE MICRO-SPRINT ACTIVE (2X XP)"
+                    } else {
+                        "⚡ 25m ROULETTE MICRO-SPRINT ACTIVE"
                     },
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,

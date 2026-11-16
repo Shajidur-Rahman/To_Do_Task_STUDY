@@ -135,8 +135,9 @@ object GeminiRouletteService {
 
         val modelsToTry = listOf(
             preferredModel,
-            CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_3_5_FLASH
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH
         ).distinct()
 
         for (model in modelsToTry) {
@@ -162,8 +163,8 @@ object GeminiRouletteService {
             val url = URL(endpointUrl)
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 12000
-                readTimeout = 14000
+                connectTimeout = 10000
+                readTimeout = 12000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("x-goog-api-key", apiKey)
@@ -186,7 +187,7 @@ object GeminiRouletteService {
                     "generationConfig",
                     JSONObject().apply {
                         put("responseMimeType", "application/json")
-                        put("temperature", 0.3)
+                        put("temperature", 0.25)
                     }
                 )
             }
@@ -221,7 +222,13 @@ object GeminiRouletteService {
             if (parts.length() == 0) return null
             val rawText = parts.getJSONObject(0).getString("text")
 
-            val cleanJson = rawText.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+            val startIdx = rawText.indexOf('{')
+            val endIdx = rawText.lastIndexOf('}')
+            val cleanJson = if (startIdx >= 0 && endIdx > startIdx) {
+                rawText.substring(startIdx, endIdx + 1)
+            } else {
+                rawText.trim()
+            }
             val parsed = JSONObject(cleanJson)
 
             BatchExamAiEvaluation(
@@ -528,9 +535,9 @@ object GeminiRouletteService {
         // 7. Query Gemini with model fallback chain
         val modelsToTry = listOf(
             preferredModel,
-            CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_3_5_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH
         ).distinct()
 
         for (model in modelsToTry) {
@@ -701,7 +708,7 @@ object GeminiRouletteService {
 
         val sprintPlan = if (probTarget > 0) {
             "• Min 0–5: Review core formulas & examples for $subName Ch $chNum ($chName)\n" +
-            "• Min 5–20: Solve ${probTarget - probDone} remaining target problems (${winner.slice.phaseTag})\n" +
+            "• Min 5–20: Solve ${maxOf(1, probTarget - probDone)} remaining target problems (${winner.slice.phaseTag})\n" +
             "• Min 20–25: Verify answers, log problem counter & slash the slice!"
         } else {
             "• Min 0–5: Skim key concepts & headings of $subName Ch $chNum ($chName)\n" +
@@ -743,11 +750,17 @@ object GeminiRouletteService {
             if (parts.length() == 0) return null
             val rawText = parts.getJSONObject(0).getString("text")
 
-            val cleanJson = rawText.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+            val startIdx = rawText.indexOf('{')
+            val endIdx = rawText.lastIndexOf('}')
+            val cleanJson = if (startIdx >= 0 && endIdx > startIdx) {
+                rawText.substring(startIdx, endIdx + 1)
+            } else {
+                rawText.trim()
+            }
             val parsed = JSONObject(cleanJson)
 
             val sliceId = parsed.getString("selectedSliceId")
-            val matchingCandidate = candidateSlices.find { it.slice.sliceId == sliceId } ?: candidateSlices.first()
+            val matchingCandidate = candidateSlices.find { it.slice.sliceId == sliceId } ?: return null
             val defaultCoach = buildDefaultCoachDiagnostics(
                 winner = matchingCandidate,
                 totalCompletedToday = totalCompletedToday,
@@ -787,7 +800,7 @@ object GeminiRouletteService {
         val pool = if (nonRejected.isNotEmpty()) nonRejected else candidateSlices
 
         val bdTime = BangladeshTimeContext.now()
-        val todayEpoch = LocalDate.now().toEpochDay()
+        val todayEpoch = bdTime.zonedDateTime.toLocalDate().toEpochDay()
         val telemetry = CustomSubjectAndAiStore.getBucketRotationTelemetry(todayEpoch)
         val lastSpun = CustomSubjectAndAiStore.getLastSpunRecord()
         val lastSpunSubject = lastSpun?.subjectName.orEmpty()
@@ -815,7 +828,7 @@ object GeminiRouletteService {
         val filteredB = applyCooldown(bList)
 
         // Anti-Bias Guard 2: Batch Exam Cap
-        val isBatchExamCapped = lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM ||
+        val isBatchExamCapped = (lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM && (filteredC.isNotEmpty() || filteredT.isNotEmpty())) ||
             (telemetry.spinsBatchExam > 0 && (filteredC.isNotEmpty() || filteredT.isNotEmpty()) && telemetry.spinsBatchExam >= (telemetry.spinsTodayNormal + telemetry.spinsComeback))
 
         // Cognitive load alternation target
@@ -839,7 +852,18 @@ object GeminiRouletteService {
             maxOf(item.slice.effectiveLagDays, overdue)
         }
 
-        if (filteredC.isNotEmpty() && (isMorningOrNight || filteredT.isEmpty() || telemetry.spinsComeback <= telemetry.spinsTodayNormal)) {
+        val otherNonEmptySpinsMin = listOfNotNull(
+            if (filteredT.isNotEmpty()) telemetry.spinsTodayNormal else null,
+            if (filteredB.isNotEmpty() && !isBatchExamCapped) telemetry.spinsBatchExam else null
+        ).minOrNull()
+
+        val shouldPickComeback = filteredC.isNotEmpty() && (
+            otherNonEmptySpinsMin == null ||
+                (lastSpun?.workloadBucket != WorkloadBucket.COMEBACK_LEFTOVER &&
+                    telemetry.spinsComeback <= otherNonEmptySpinsMin + if (isMorningOrNight) 1 else 0)
+            )
+
+        if (shouldPickComeback) {
             // Pick COMEBACK_LEFTOVER: prioritize highest days overdue / lag or matching cognitive category
             selectedSlice = filteredC.filter { getCognitiveCategory(it) == targetCategory }
                 .maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
@@ -860,16 +884,22 @@ object GeminiRouletteService {
             transitionTag = "📅 SYLLABUS MOMENTUM | Regular HSC Focus"
             whyText = "Advancing core syllabus for $subName Ch ${selectedSlice.chain.chapterNumber} (${cat.label}) during ${bdTime.bdCircadianPhase} to maintain steady daily pace."
             nextText = "Next, rotate to an analytical problem-solving sprint or private exam drill."
-        } else if (filteredB.isNotEmpty() && !isBatchExamCapped) {
-            // Pick BATCH_EXAM: prioritize closest exam deadline
-            val urgentExams = upcomingBatchExams.filter { it.daysLeft(todayEpoch) <= 7L }.sortedBy { it.daysLeft(todayEpoch) }
+        } else if (filteredB.isNotEmpty()) {
+            // Pick BATCH_EXAM: prioritize closest upcoming exam deadline
+            val urgentExams = upcomingBatchExams
+                .filter { it.daysLeft(todayEpoch) in 0L..7L }
+                .sortedBy { it.daysLeft(todayEpoch) }
             selectedSlice = urgentExams.firstNotNullOfOrNull { exam ->
                 filteredB.firstOrNull { exam.matchesSlice(it) }
             } ?: filteredB.first()
             val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(selectedSlice) }
             val subName = getSubjectName(selectedSlice)
             val days = matchingExam?.daysLeft(todayEpoch) ?: 0L
-            val daysStr = if (days == 0L) "TODAY" else "in ${days}d"
+            val daysStr = when {
+                days == 0L -> "TODAY"
+                days < 0L -> "${-days}d ago"
+                else -> "in ${days}d"
+            }
             transitionTag = "📝 BATCH EXAM RADAR (${matchingExam?.formatSummary ?: "Target Drill"})"
             whyText = "Targeted drill for $subName Ch ${selectedSlice.chain.chapterNumber}: upcoming ${matchingExam?.batchOrCoachingName ?: "coaching exam"} $daysStr (${matchingExam?.formatSummary ?: "MCQ/CQ"})."
             nextText = "After this sprint, transition to a regular syllabus slice to prevent cognitive fatigue."

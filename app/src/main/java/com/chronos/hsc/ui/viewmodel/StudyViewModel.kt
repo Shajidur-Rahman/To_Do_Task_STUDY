@@ -47,6 +47,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import com.chronos.hsc.notification.ChronosWorkScheduler
 
 data class SprintTimerState(
@@ -133,8 +134,8 @@ class StudyViewModel(
     private val firebaseSyncManager: FirebaseSyncManager? = FirebaseSyncManager.getInstanceIfInitialized()
 ) : ViewModel() {
 
-    private val todayEpochDay = LocalDate.now().toEpochDay()
-    private val selectedDateFlow = MutableStateFlow(todayEpochDay)
+    private val todayEpochDayFlow = MutableStateFlow(LocalDate.now().toEpochDay())
+    private val selectedDateFlow = MutableStateFlow(todayEpochDayFlow.value)
     private val batteryModeFlow = MutableStateFlow(EnergyLevel.HIGH_FOCUS)
     private val modalControlFlow = MutableStateFlow(ModalControlState())
 
@@ -150,28 +151,56 @@ class StudyViewModel(
         }
     }
 
-    private val slicesForSelectedDateFlow = selectedDateFlow.flatMapLatest { epochDay ->
+    fun refreshTodayIfNeeded() {
+        val latestToday = LocalDate.now().toEpochDay()
+        val oldToday = todayEpochDayFlow.value
+        if (latestToday != oldToday) {
+            todayEpochDayFlow.value = latestToday
+            if (selectedDateFlow.value == oldToday) {
+                selectedDateFlow.value = latestToday
+            }
+            viewModelScope.launch {
+                repository.syncOverdueBossShields(latestToday)
+            }
+        }
+    }
+
+    fun syncNotificationPreferences(context: Context) {
+        modalControlFlow.update {
+            it.copy(
+                morningBriefingEnabled = ChronosWorkScheduler.isMorningBriefingEnabled(context),
+                dominoAlertsEnabled = ChronosWorkScheduler.isDominoAlertsEnabled(context)
+            )
+        }
+    }
+
+    private val slicesForSelectedDateFlow = combine(selectedDateFlow, todayEpochDayFlow) { epochDay, today ->
+        epochDay to today
+    }.flatMapLatest { (epochDay, today) ->
         when (epochDay) {
-            todayEpochDay -> repository.observeTodayAndAllUnfinishedPastSlices(todayEpochDay)
-            ALL_OVERDUE_FILTER_EPOCH_DAY -> repository.observeOverdueSlices(todayEpochDay)
+            today -> repository.observeTodayAndAllUnfinishedPastSlices(today)
+            ALL_OVERDUE_FILTER_EPOCH_DAY -> repository.observeOverdueSlices(today)
             else -> repository.observeSlicesForDate(epochDay)
         }
     }
 
-    private val dateSlicesBundleFlow = combine(
-        selectedDateFlow,
-        slicesForSelectedDateFlow,
-        repository.observeTodayAndAllUnfinishedPastSlices(todayEpochDay),
-        repository.observeOverdueSlices(todayEpochDay),
-        repository.observeDatesWithOverdueTasks(todayEpochDay)
-    ) { selectedDate, dateSlices, todaySlices, overdueSlices, datesWithOverdueTasks ->
-        DateSlicesBundle(
-            selectedDateEpochDay = selectedDate,
-            dateSlices = dateSlices,
-            todaySlices = todaySlices,
-            overdueSlices = overdueSlices,
-            datesWithOverdueTasks = datesWithOverdueTasks
-        )
+    private val dateSlicesBundleFlow = todayEpochDayFlow.flatMapLatest { today ->
+        combine(
+            selectedDateFlow,
+            slicesForSelectedDateFlow,
+            repository.observeTodayAndAllUnfinishedPastSlices(today),
+            repository.observeOverdueSlices(today),
+            repository.observeDatesWithOverdueTasks(today)
+        ) { selectedDate, dateSlices, todaySlices, overdueSlices, datesWithOverdueTasks ->
+            DateSlicesBundle(
+                todayEpochDay = today,
+                selectedDateEpochDay = selectedDate,
+                dateSlices = dateSlices,
+                todaySlices = todaySlices,
+                overdueSlices = overdueSlices,
+                datesWithOverdueTasks = datesWithOverdueTasks
+            )
+        }
     }
 
     private val coreDataFlow = combine(
@@ -180,6 +209,7 @@ class StudyViewModel(
         repository.observeUserStats()
     ) { bundle, batteryMode, userStats ->
         CoreDashboardData(
+            todayEpochDay = bundle.todayEpochDay,
             selectedDateEpochDay = bundle.selectedDateEpochDay,
             batteryMode = batteryMode,
             userStats = userStats,
@@ -190,18 +220,20 @@ class StudyViewModel(
         )
     }
 
-    private val analyticsAndChainsFlow = combine(
-        repository.observeAllChainsWithSlices(),
-        repository.observeHeatmapCells(todayEpochDay),
-        repository.observeSubjectAnalytics(),
-        repository.observeUpcomingEchoes(todayEpochDay)
-    ) { allChains, heatmapCells, subjectAnalytics, upcomingEchoes ->
-        AnalyticsAndChainsData(
-            allChains = allChains,
-            heatmapCells = heatmapCells,
-            subjectAnalytics = subjectAnalytics,
-            upcomingEchoes = upcomingEchoes
-        )
+    private val analyticsAndChainsFlow = todayEpochDayFlow.flatMapLatest { today ->
+        combine(
+            repository.observeAllChainsWithSlices(),
+            repository.observeHeatmapCells(today),
+            repository.observeSubjectAnalytics(),
+            repository.observeUpcomingEchoes(today)
+        ) { allChains, heatmapCells, subjectAnalytics, upcomingEchoes ->
+            AnalyticsAndChainsData(
+                allChains = allChains,
+                heatmapCells = heatmapCells,
+                subjectAnalytics = subjectAnalytics,
+                upcomingEchoes = upcomingEchoes
+            )
+        }
     }
 
     private val examAndNeuroFlow = combine(
@@ -244,12 +276,13 @@ class StudyViewModel(
         modalControlFlow,
         externalStoresFlow
     ) { core, analytics, examAndNeuro, modals, (batchExams, cloudSync) ->
+        val currentToday = core.todayEpochDay
         val (slicesForDisplay, queuedCountMap) = if (
-            core.selectedDateEpochDay == todayEpochDay && !modals.showAllOverdueIndividually
+            core.selectedDateEpochDay == currentToday && !modals.showAllOverdueIndividually
         ) {
             collapseMultiDayOverdueChains(
                 slices = core.dateSlices,
-                todayEpochDay = todayEpochDay
+                todayEpochDay = currentToday
             )
         } else {
             core.dateSlices to emptyMap()
@@ -261,11 +294,11 @@ class StudyViewModel(
         val activeExams = batchExams
             .filter { !it.isCompleted }
             .sortedWith(
-                compareBy<BatchExamRecord> { it.daysLeft(todayEpochDay) }
+                compareBy<BatchExamRecord> { it.daysLeft(currentToday) }
                     .thenByDescending { it.aiImportanceScore }
             )
         StudyUiState(
-            todayEpochDay = todayEpochDay,
+            todayEpochDay = currentToday,
             selectedDateEpochDay = core.selectedDateEpochDay,
             batteryMode = core.batteryMode,
             userStats = core.userStats,
@@ -425,7 +458,7 @@ class StudyViewModel(
         closeBatchExamModal()
         if (autoCreateSlices) {
             viewModelScope.launch {
-                repository.createExamPrepSlicesForRecord(exam, todayEpochDay)
+                repository.createExamPrepSlicesForRecord(exam, todayEpochDayFlow.value)
                 _events.emit(
                     StudyUiEvent.ShowSnackbar(
                         message = "Scheduled ${exam.subjectName} Exam & added prep slices to Battleground! 🎯"
@@ -464,7 +497,7 @@ class StudyViewModel(
 
     fun createExamPrepSlicesForExam(exam: BatchExamRecord) {
         viewModelScope.launch {
-            repository.createExamPrepSlicesForRecord(exam, todayEpochDay)
+            repository.createExamPrepSlicesForRecord(exam, todayEpochDayFlow.value)
             _events.emit(
                 StudyUiEvent.ShowSnackbar(
                     message = "Boosted Exam Prep slices for ${exam.subjectName} until exam day! 🚀"
@@ -536,6 +569,10 @@ class StudyViewModel(
             }
             val snapshot = repository.deleteEntireTopicChainWithSnapshot(chainId)
             if (snapshot != null) {
+                val activeSprint = modalControlFlow.value.sprintTimerState
+                if (activeSprint != null && snapshot.slices.any { it.sliceId == activeSprint.targetSliceId }) {
+                    stopSprintTimerInternal(clearUncompletedBonus = false)
+                }
                 lastDeletedSnapshot = snapshot
                 val sliceCount = snapshot.slices.size
                 _events.emit(
@@ -554,9 +591,10 @@ class StudyViewModel(
         viewModelScope.launch {
             repository.restoreDeletedChainSnapshot(snapshot)
             lastDeletedSnapshot = null
+            val subjectLabel = snapshot.customSubjectLink?.customSubjectName ?: snapshot.chain.subject.fullName
             _events.emit(
                 StudyUiEvent.ShowSnackbar(
-                    message = "Restored ${snapshot.chain.subject.fullName} Ch ${snapshot.chain.chapterNumber} (${snapshot.slices.size} slices)"
+                    message = "Restored $subjectLabel Ch ${snapshot.chain.chapterNumber} (${snapshot.slices.size} slices)"
                 )
             )
         }
@@ -566,6 +604,9 @@ class StudyViewModel(
         viewModelScope.launch {
             modalControlFlow.update {
                 it.copy(slicePendingDelete = null, chainPendingDelete = null)
+            }
+            if (modalControlFlow.value.sprintTimerState?.targetSliceId == sliceId) {
+                stopSprintTimerInternal(clearUncompletedBonus = false)
             }
             val reindexedCount = repository.deleteSingleSliceAndReindex(sliceId)
             _events.emit(
@@ -578,9 +619,10 @@ class StudyViewModel(
 
     fun executeGlobalDominoShift() {
         viewModelScope.launch {
-            val result = repository.executeDominoShift(todayEpochDay)
+            val today = todayEpochDayFlow.value
+            val result = repository.executeDominoShift(today)
             if (result.shiftedSlicesCount > 0) {
-                selectedDateFlow.value = todayEpochDay
+                selectedDateFlow.value = today
                 _events.emit(
                     StudyUiEvent.ShowSnackbar(
                         message = "Domino Shift complete: Shifted ${result.shiftedSlicesCount} slices across ${result.shiftedChainsCount} chain(s) cleanly!"
@@ -605,9 +647,10 @@ class StudyViewModel(
 
     fun catchUpSliceToToday(sliceId: String) {
         viewModelScope.launch {
-            val count = repository.catchUpSliceToToday(sliceId, todayEpochDay)
+            val today = todayEpochDayFlow.value
+            val count = repository.catchUpSliceToToday(sliceId, today)
             if (count > 0) {
-                selectedDateFlow.value = todayEpochDay
+                selectedDateFlow.value = today
                 _events.emit(
                     StudyUiEvent.ShowSnackbar(
                         message = "Instant Catch-Up: Re-aligned $count slice(s) starting from today!"
@@ -619,9 +662,10 @@ class StudyViewModel(
 
     fun instantCatchUpAllLaggingChains() {
         viewModelScope.launch {
-            val count = repository.instantCatchUpAllLaggingChains(todayEpochDay)
+            val today = todayEpochDayFlow.value
+            val count = repository.instantCatchUpAllLaggingChains(today)
             if (count > 0) {
-                selectedDateFlow.value = todayEpochDay
+                selectedDateFlow.value = today
                 _events.emit(
                     StudyUiEvent.ShowSnackbar(
                         message = "Instant Catch-Up: Re-baselined $count lagging slice(s) to today! Fresh start activated."
@@ -654,7 +698,7 @@ class StudyViewModel(
             val result = repository.completeTaskSlice(sliceId) ?: return@launch
             val activeSprint = modalControlFlow.value.sprintTimerState
             if (activeSprint?.targetSliceId == sliceId) {
-                stopSprintTimer()
+                stopSprintTimerInternal(clearUncompletedBonus = false)
             }
 
             // Auto-log study hours for matching private exam if any
@@ -666,14 +710,15 @@ class StudyViewModel(
             val matchedExam = BatchExamStore.logStudyHoursForMatchingSlice(sliceWithChain, 1.5f)
 
             // Record completed slice in rotation telemetry
+            val today = todayEpochDayFlow.value
             val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(result.parentChain.chainId)
             val subName = customLink?.customSubjectName ?: result.parentChain.subject.fullName
             val bucket = when {
-                result.completedSlice.scheduledDateEpochDay < todayEpochDay || result.completedSlice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+                result.completedSlice.scheduledDateEpochDay < today || result.completedSlice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
                 matchedExam != null || BatchExamStore.getActiveUpcomingExams().any { it.matchesSlice(sliceWithChain) } -> WorkloadBucket.BATCH_EXAM
                 else -> WorkloadBucket.TODAY_NORMAL
             }
-            CustomSubjectAndAiStore.recordCompletedSlice(bucket, subName, todayEpochDay)
+            CustomSubjectAndAiStore.recordCompletedSlice(bucket, subName, today)
 
             if (result.didConquerFinalCoreSlice) {
                 modalControlFlow.update {
@@ -721,7 +766,7 @@ class StudyViewModel(
                 val spawned = repository.spawnEbbinghausEchoes(
                     chainId = conqueredChain.chainId,
                     confidenceRating = confidenceRating,
-                    fromEpochDay = todayEpochDay
+                    fromEpochDay = todayEpochDayFlow.value
                 )
                 val intervalsText = confidenceRating.intervalsInDays.joinToString(", ") { "+${it}d" }
                 _events.emit(
@@ -754,10 +799,11 @@ class StudyViewModel(
 
     fun onRouletteLockedSlice(slice: SliceWithParentChain) {
         sprintCountdownJob?.cancel()
+        val today = todayEpochDayFlow.value
         val customLink = CustomSubjectAndAiStore.getCustomSubjectForChain(slice.chain.chainId)
         val subName = customLink?.customSubjectName ?: slice.chain.subject.fullName
         val bucket = when {
-            slice.slice.scheduledDateEpochDay < todayEpochDay || slice.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
+            slice.slice.scheduledDateEpochDay < today || slice.slice.effectiveLagDays > 0 -> WorkloadBucket.COMEBACK_LEFTOVER
             BatchExamStore.getActiveUpcomingExams().any { it.matchesSlice(slice) } -> WorkloadBucket.BATCH_EXAM
             else -> WorkloadBucket.TODAY_NORMAL
         }
@@ -767,7 +813,7 @@ class StudyViewModel(
             subjectName = subName,
             category = GeminiRouletteService.getCognitiveCategory(slice),
             bucket = bucket,
-            todayEpochDay = todayEpochDay
+            todayEpochDay = today
         )
         modalControlFlow.update {
             it.copy(
@@ -784,12 +830,13 @@ class StudyViewModel(
             )
         }
         sprintCountdownJob = viewModelScope.launch {
-            var remaining = 60
-            while (remaining > 0) {
+            val startMs = SystemClock.elapsedRealtime()
+            while (true) {
                 delay(1_000L)
-                remaining--
                 val currentSprint = modalControlFlow.value.sprintTimerState ?: break
                 if (currentSprint.isSprintRunning) break
+                val elapsedSec = ((SystemClock.elapsedRealtime() - startMs) / 1000L).toInt()
+                val remaining = (60 - elapsedSec).coerceAtLeast(0)
                 modalControlFlow.update { state ->
                     state.copy(
                         sprintTimerState = state.sprintTimerState?.copy(
@@ -797,6 +844,7 @@ class StudyViewModel(
                         )
                     )
                 }
+                if (remaining <= 0) break
             }
         }
     }
@@ -820,20 +868,38 @@ class StudyViewModel(
                     )
                 )
             }
+            var remainingMs = 25 * 60 * 1000L
+            var lastTickMs = SystemClock.elapsedRealtime()
             while (true) {
                 delay(1_000L)
+                val nowMs = SystemClock.elapsedRealtime()
                 val timer = modalControlFlow.value.sprintTimerState ?: break
                 if (!timer.isSprintRunning) break
-                if (timer.isSprintPaused) continue
-                val nextSeconds = (timer.sprintSecondsRemaining - 1).coerceAtLeast(0)
-                modalControlFlow.update { state ->
-                    state.copy(
-                        sprintTimerState = state.sprintTimerState?.copy(
-                            sprintSecondsRemaining = nextSeconds
+                if (!timer.isSprintPaused) {
+                    val deltaMs = (nowMs - lastTickMs).coerceAtLeast(0L)
+                    remainingMs = (remainingMs - deltaMs).coerceAtLeast(0L)
+                    val nextSeconds = (remainingMs / 1000L).toInt().coerceAtLeast(0)
+                    modalControlFlow.update { state ->
+                        state.copy(
+                            sprintTimerState = state.sprintTimerState?.copy(
+                                sprintSecondsRemaining = nextSeconds
+                            )
                         )
-                    )
+                    }
+                    if (nextSeconds <= 0) {
+                        modalControlFlow.update { state ->
+                            state.copy(sprintTimerState = null)
+                        }
+                        val bonusLabel = if (acceptedWithinWindow) "2X XP" else "XP"
+                        _events.emit(
+                            StudyUiEvent.ShowSnackbar(
+                                message = "⏱️ 25m Micro-Sprint Complete! Slash '${currentSprint.targetShortBadge}' to claim $bonusLabel!"
+                            )
+                        )
+                        break
+                    }
                 }
-                if (nextSeconds <= 0) break
+                lastTickMs = nowMs
             }
         }
     }
@@ -848,8 +914,19 @@ class StudyViewModel(
     }
 
     fun stopSprintTimer() {
+        stopSprintTimerInternal(clearUncompletedBonus = true)
+    }
+
+    private fun stopSprintTimerInternal(clearUncompletedBonus: Boolean) {
+        val activeSliceId = modalControlFlow.value.sprintTimerState?.targetSliceId
+        val hadMultiplier = modalControlFlow.value.sprintTimerState?.has2xMultiplier == true
         sprintCountdownJob?.cancel()
         modalControlFlow.update { it.copy(sprintTimerState = null) }
+        if (clearUncompletedBonus && hadMultiplier && activeSliceId != null) {
+            viewModelScope.launch {
+                repository.clearRouletteSprintMultiplier(activeSliceId)
+            }
+        }
     }
 
     fun openExamCountdownModal() {
@@ -932,7 +1009,9 @@ class StudyViewModel(
                     _events.emit(StudyUiEvent.ShowSnackbar(message = "Failed to open destination file for export"))
                     return@launch
                 }
-                val result = repository.exportBackupToJsonStream(outputStream)
+                val result = outputStream.use { stream ->
+                    repository.exportBackupToJsonStream(stream)
+                }
                 result.onSuccess { sliceCount ->
                     _events.emit(StudyUiEvent.ShowSnackbar(message = "✅ Exported $sliceCount study slices to JSON backup!"))
                 }.onFailure { err ->
@@ -952,7 +1031,9 @@ class StudyViewModel(
                     _events.emit(StudyUiEvent.ShowSnackbar(message = "Failed to open source file for restore"))
                     return@launch
                 }
-                val result = repository.restoreBackupFromJsonStream(inputStream)
+                val result = inputStream.use { stream ->
+                    repository.restoreBackupFromJsonStream(stream)
+                }
                 result.onSuccess { msg ->
                     _events.emit(StudyUiEvent.ShowSnackbar(message = "✅ $msg"))
                 }.onFailure { err ->
@@ -1017,6 +1098,7 @@ class StudyViewModel(
     }
 
     private data class DateSlicesBundle(
+        val todayEpochDay: Long,
         val selectedDateEpochDay: Long,
         val dateSlices: List<SliceWithParentChain>,
         val todaySlices: List<SliceWithParentChain>,
@@ -1025,6 +1107,7 @@ class StudyViewModel(
     )
 
     private data class CoreDashboardData(
+        val todayEpochDay: Long,
         val selectedDateEpochDay: Long,
         val batteryMode: EnergyLevel,
         val userStats: UserStats,

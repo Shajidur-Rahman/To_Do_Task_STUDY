@@ -129,17 +129,38 @@ abstract class StudyDatabase : RoomDatabase() {
             }
         }
 
+        private fun getTableColumnNames(db: SupportSQLiteDatabase, tableName: String): Set<String> {
+            val cols = mutableSetOf<String>()
+            db.query("PRAGMA table_info(`$tableName`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex >= 0) {
+                    while (cursor.moveToNext()) {
+                        cols.add(cursor.getString(nameIndex))
+                    }
+                }
+            }
+            return cols
+        }
+
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `originalScheduledEpochDay` INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `shiftLagCount` INTEGER NOT NULL DEFAULT 0")
+                val cols = getTableColumnNames(db, "daily_task_slices")
+                if ("originalScheduledEpochDay" !in cols) {
+                    db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `originalScheduledEpochDay` INTEGER NOT NULL DEFAULT 0")
+                }
+                if ("shiftLagCount" !in cols) {
+                    db.execSQL("ALTER TABLE `daily_task_slices` ADD COLUMN `shiftLagCount` INTEGER NOT NULL DEFAULT 0")
+                }
                 db.execSQL("UPDATE `daily_task_slices` SET `originalScheduledEpochDay` = `scheduledDateEpochDay` WHERE `originalScheduledEpochDay` = 0")
             }
         }
 
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `study_topic_chains` ADD COLUMN `linkedPreviousChainId` TEXT DEFAULT NULL")
+                val cols = getTableColumnNames(db, "study_topic_chains")
+                if ("linkedPreviousChainId" !in cols) {
+                    db.execSQL("ALTER TABLE `study_topic_chains` ADD COLUMN `linkedPreviousChainId` TEXT DEFAULT NULL")
+                }
             }
         }
 

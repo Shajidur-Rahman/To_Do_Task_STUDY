@@ -41,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -136,7 +137,7 @@ fun SwipeToSlashTaskCard(
     val slice = item.slice
     val chain = item.chain
     val batchExams by BatchExamStore.batchExamsFlow.collectAsState()
-    val effectiveBatchExam = matchingBatchExam ?: remember(chain.chainId, todayEpochDay, batchExams) {
+    val effectiveBatchExam = matchingBatchExam ?: remember(chain.chainId, chain.chapterNumber, chain.chapterName, todayEpochDay, batchExams) {
         BatchExamStore.findMatchingActiveExam(item, todayEpochDay)
     }
     val chainLinks by CustomSubjectAndAiStore.chainLinksFlow.collectAsState()
@@ -156,11 +157,15 @@ fun SwipeToSlashTaskCard(
     val critterType = LocalNatureCritterType.current
 
     var cardWidthPx by remember { mutableFloatStateOf(1000f) }
-    var dragOffsetX by remember(slice.sliceId) { mutableFloatStateOf(0f) }
+    val dragAnimatable = remember(slice.sliceId) { Animatable(0f) }
     val burstProgress = remember(slice.sliceId) { Animatable(0f) }
     var isBursting by remember(slice.sliceId) { mutableStateOf(false) }
 
-    val particles = remember(slice.sliceId) {
+    LaunchedEffect(slice.sliceId, slice.isCompleted) {
+        dragAnimatable.snapTo(0f)
+    }
+
+    val particles = remember(slice.sliceId, isNature, subjectColor) {
         val palette = if (isNature) {
             listOf(subjectColor, NatureLeafGreen, NatureSproutLime, NatureFireflyGold, Color.White)
         } else {
@@ -204,7 +209,7 @@ fun SwipeToSlashTaskCard(
 
     // Cap threshold at 240.dp equivalent or 30% of card width so tablets don't require huge swipes
     val swipeThresholdPx = (cardWidthPx * 0.28f).coerceIn(160f, 320f)
-    val effectiveDragX = dragOffsetX
+    val effectiveDragX = dragAnimatable.value
     val slashRatio = (effectiveDragX / swipeThresholdPx).coerceIn(0f, 1.15f)
     val undoRatio = (-effectiveDragX / swipeThresholdPx).coerceIn(0f, 1.15f)
 
@@ -368,7 +373,7 @@ fun SwipeToSlashTaskCard(
                         },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
-                            val current = dragOffsetX
+                            val current = dragAnimatable.value
                             val next = if (slice.isCompleted) {
                                 (current + dragAmount).coerceAtMost(0f)
                             } else {
@@ -376,23 +381,23 @@ fun SwipeToSlashTaskCard(
                             }
                             val crossedSlashThreshold = !slice.isCompleted && current < swipeThresholdPx && next >= swipeThresholdPx
                             val crossedUndoThreshold = slice.isCompleted && current > -swipeThresholdPx && next <= -swipeThresholdPx
-                            dragOffsetX = next
+                            scope.launch {
+                                dragAnimatable.snapTo(next)
+                            }
                             if (crossedSlashThreshold || crossedUndoThreshold) {
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             }
                         },
                         onDragEnd = {
-                            val finalDrag = dragOffsetX
+                            val finalDrag = dragAnimatable.value
                             scope.launch {
-                                Animatable(finalDrag).animateTo(
+                                dragAnimatable.animateTo(
                                     targetValue = 0f,
                                     animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
                                         stiffness = Spring.StiffnessMedium
                                     )
-                                ) {
-                                    dragOffsetX = value
-                                }
+                                )
                             }
                             if (!slice.isCompleted && finalDrag >= swipeThresholdPx) {
                                 triggerSlashCompletion()
@@ -401,11 +406,14 @@ fun SwipeToSlashTaskCard(
                             }
                         },
                         onDragCancel = {
-                            val finalDrag = dragOffsetX
                             scope.launch {
-                                Animatable(finalDrag).animateTo(0f) {
-                                    dragOffsetX = value
-                                }
+                                dragAnimatable.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    )
+                                )
                             }
                         }
                     )
@@ -1058,7 +1066,7 @@ fun SwipeToSlashTaskCard(
                     progress = burstProgress.value,
                     modifier = Modifier.matchParentSize()
                 )
-            } else if (slashRatio > 0.04f || isBursting) {
+            } else if (!isNature && (slashRatio > 0.04f || isBursting)) {
                 Canvas(
                     modifier = Modifier.matchParentSize()
                 ) {

@@ -215,7 +215,7 @@ fun AddHscTopicModal(
     }
 
     val targetFinishEpochDay = selectedTargetChain?.let { getChainFinishEpochDay(it) } ?: todayEpochDay
-    val exactNextDayEpochDay = targetFinishEpochDay + 1L
+    val exactNextDayEpochDay = maxOf(todayEpochDay, targetFinishEpochDay + 1L)
     val targetFinishFormatted = remember(targetFinishEpochDay) {
         LocalDate.ofEpochDay(targetFinishEpochDay).format(dateFormatter)
     }
@@ -342,6 +342,7 @@ fun AddHscTopicModal(
                         modifier = Modifier.clickable {
                             selectedCustomSubject = null
                             selectedSubject = subject
+                            isTestPaperSolving = false
                             val nextPaper = when {
                                 subject.isSinglePaperOnly -> HscPaper.SINGLE
                                 selectedPaper == HscPaper.SINGLE -> HscPaper.FIRST_PAPER
@@ -395,6 +396,7 @@ fun AddHscTopicModal(
                         modifier = Modifier.clickable {
                             selectedCustomSubject = customSub
                             selectedSubject = HscSubject.ICT
+                            isTestPaperSolving = false
                             selectedPaper = if (customSub.hasSecondPaper) HscPaper.FIRST_PAPER else HscPaper.SINGLE
                             selectedChapterNumber = 1
                             chapterTitle = "অধ্যায় ১"
@@ -511,6 +513,7 @@ fun AddHscTopicModal(
                                 .weight(1f)
                                 .clickable {
                                     selectedPaper = paper
+                                    isTestPaperSolving = false
                                     if (selectedCustomSubject == null) {
                                         val nextChapters = HscSyllabusCatalog.getChaptersFor(selectedSubject, paper)
                                         if (selectedChapterNumber > nextChapters.size) {
@@ -597,6 +600,7 @@ fun AddHscTopicModal(
                             onClick = {
                                 selectedChapterNumber = chNum
                                 chapterTitle = banglaName
+                                isTestPaperSolving = false
                                 isChapterDropdownExpanded = false
                             }
                         )

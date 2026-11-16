@@ -258,6 +258,17 @@ interface StudyDao {
     suspend fun insertAllNeuroSessions(sessions: List<NeuroSessionEntity>)
 
     @Transaction
+    @Query(
+        """
+        SELECT * FROM daily_task_slices 
+        WHERE scheduledDateEpochDay = :todayEpochDay 
+           OR (scheduledDateEpochDay < :todayEpochDay AND isCompleted = 0)
+        ORDER BY isCompleted ASC, scheduledDateEpochDay ASC, sliceNumber ASC
+        """
+    )
+    suspend fun getTodayAndAllUnfinishedPastSlicesOnce(todayEpochDay: Long): List<SliceWithParentChain>
+
+    @Transaction
     suspend fun restoreFullDatabase(
         userStats: UserStats,
         chains: List<StudyTopicChain>,
@@ -272,7 +283,9 @@ interface StudyDao {
 
         upsertUserStats(userStats)
         if (chains.isNotEmpty()) insertAllChains(chains)
-        if (slices.isNotEmpty()) insertSlices(slices)
+        val validChainIds = chains.map { it.chainId }.toHashSet()
+        val safeSlices = slices.filter { it.chainId in validChainIds }
+        if (safeSlices.isNotEmpty()) insertSlices(safeSlices)
         if (exams.isNotEmpty()) insertAllExams(exams)
         if (neuroSessions.isNotEmpty()) insertAllNeuroSessions(neuroSessions)
     }

@@ -143,6 +143,8 @@ object CustomSubjectAndAiStore {
     const val MODEL_GEMINI_3_8_FLASH = "gemini-3.8-flash"
     const val MODEL_GEMINI_3_5_FLASH = "gemini-3.5-flash"
     const val MODEL_GEMINI_2_5_FLASH = "gemini-2.5-flash"
+    const val MODEL_GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite"
+    const val MODEL_GEMINI_2_0_FLASH = "gemini-2.0-flash"
     const val ROULETTE_PASSCODE = "4488"
     private const val KEY_ROULETTE_UNLOCKED = "key_roulette_security_unlocked"
 
@@ -247,12 +249,36 @@ object CustomSubjectAndAiStore {
         } else {
             current.add(subject)
         }
+        // Keep denormalized chain links aligned when a custom subject is edited
+        val currentLinks = getAllChainLinks()
+        var linksModified = false
+        val updatedLinks = currentLinks.mapValues { (_, link) ->
+            if (link.customSubjectId == subject.id) {
+                linksModified = true
+                link.copy(
+                    customSubjectName = subject.name,
+                    customShortCode = subject.shortCode,
+                    customColorHex = subject.colorHex,
+                    cognitiveCategory = subject.cognitiveCategory,
+                    isSinglePaperOnly = subject.isSinglePaperOnly
+                )
+            } else {
+                link
+            }
+        }
+        if (linksModified) {
+            persistChainLinks(updatedLinks, notifyCloud = false)
+        }
         persistCustomSubjects(current, notifyCloud = true)
     }
 
     @Synchronized
     fun deleteCustomSubject(id: String) {
         val current = getCustomSubjects().filter { it.id != id }
+        val filteredLinks = getAllChainLinks().filterValues { it.customSubjectId != id }
+        if (filteredLinks.size != _chainLinksFlow.value.size) {
+            persistChainLinks(filteredLinks, notifyCloud = false)
+        }
         onLocalCustomSubjectDeleted?.invoke(id)
         persistCustomSubjects(current, notifyCloud = true)
     }
@@ -316,10 +342,8 @@ object CustomSubjectAndAiStore {
         return root.toString()
     }
 
-    @Synchronized
     fun getCustomSubjectForChain(chainId: String): CustomSubjectLink? {
-        val links = getAllChainLinks()
-        return links[chainId]
+        return _chainLinksFlow.value[chainId] ?: getAllChainLinks()[chainId]
     }
 
     @Synchronized
@@ -342,6 +366,13 @@ object CustomSubjectAndAiStore {
             cognitiveCategory = subject.cognitiveCategory,
             isSinglePaperOnly = subject.isSinglePaperOnly
         )
+        persistChainLinks(links, notifyCloud = true)
+    }
+
+    @Synchronized
+    fun linkChainToCustomSubject(link: CustomSubjectLink) {
+        val links = getAllChainLinks().toMutableMap()
+        links[link.chainId] = link
         persistChainLinks(links, notifyCloud = true)
     }
 
@@ -391,7 +422,12 @@ object CustomSubjectAndAiStore {
     }
 
     fun getSelectedModel(): String {
-        return getPrefs().getString(KEY_MODEL, MODEL_GEMINI_3_8_FLASH) ?: MODEL_GEMINI_3_8_FLASH
+        val raw = getPrefs().getString(KEY_MODEL, MODEL_GEMINI_2_5_FLASH)?.trim().orEmpty()
+        return when {
+            raw.isEmpty() || raw == MODEL_GEMINI_3_8_FLASH || raw == MODEL_GEMINI_3_5_FLASH ->
+                MODEL_GEMINI_2_5_FLASH
+            else -> raw
+        }
     }
 
     fun setSelectedModel(model: String) {

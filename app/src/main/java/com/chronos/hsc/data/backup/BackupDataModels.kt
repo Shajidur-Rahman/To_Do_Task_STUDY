@@ -14,19 +14,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 data class ChronosFullBackupDto(
-    val backupVersion: Int = 1,
+    val backupVersion: Int = 2,
     val exportTimestamp: Long = System.currentTimeMillis(),
     val userStats: UserStats,
     val chains: List<StudyTopicChain>,
     val slices: List<DailyTaskSlice>,
     val exams: List<ExamCountdownEntity>,
-    val neuroSessions: List<NeuroSessionEntity>
+    val neuroSessions: List<NeuroSessionEntity>,
+    val customSubjectsJson: String? = null,
+    val chainLinksJson: String? = null,
+    val batchExamsJson: String? = null
 ) {
     fun toJsonString(): String {
         val root = JSONObject()
         root.put("backupVersion", backupVersion)
         root.put("exportTimestamp", exportTimestamp)
-        root.put("appVersion", "1.0.0")
+        root.put("appVersion", "1.4.4")
 
         // UserStats
         val statsObj = JSONObject()
@@ -54,6 +57,7 @@ data class ChronosFullBackupDto(
             cObj.put("bossMaxHp", c.bossMaxHp)
             cObj.put("bossBonusShieldHp", c.bossBonusShieldHp)
             cObj.put("isChainCompleted", c.isChainCompleted)
+            c.linkedPreviousChainId?.let { cObj.put("linkedPreviousChainId", it) }
             chainsArray.put(cObj)
         }
         root.put("chains", chainsArray)
@@ -78,6 +82,8 @@ data class ChronosFullBackupDto(
             s.echoIntervalDays?.let { sObj.put("echoIntervalDays", it) }
             s.sliceEnergyOverride?.let { sObj.put("sliceEnergyOverride", it.name) }
             sObj.put("xpMultiplier", s.xpMultiplier)
+            sObj.put("originalScheduledEpochDay", s.originalScheduledEpochDay)
+            sObj.put("shiftLagCount", s.shiftLagCount)
             slicesArray.put(sObj)
         }
         root.put("slices", slicesArray)
@@ -108,6 +114,10 @@ data class ChronosFullBackupDto(
         }
         root.put("neuroSessions", neuroArray)
 
+        customSubjectsJson?.let { root.put("customSubjectsJson", it) }
+        chainLinksJson?.let { root.put("chainLinksJson", it) }
+        batchExamsJson?.let { root.put("batchExamsJson", it) }
+
         return root.toString(2)
     }
 
@@ -125,7 +135,9 @@ data class ChronosFullBackupDto(
                     totalXp = statsObj.optInt("totalXp", 0),
                     currentLevel = statsObj.optInt("currentLevel", 1),
                     streakDays = statsObj.optInt("streakDays", 0),
-                    lastStudyEpochDay = if (statsObj.has("lastStudyEpochDay")) statsObj.getLong("lastStudyEpochDay") else null
+                    lastStudyEpochDay = if (statsObj.has("lastStudyEpochDay") && !statsObj.isNull("lastStudyEpochDay")) {
+                        statsObj.getLong("lastStudyEpochDay")
+                    } else null
                 )
             } else {
                 UserStats()
@@ -150,7 +162,10 @@ data class ChronosFullBackupDto(
                         createdAtEpochDay = cObj.optLong("createdAtEpochDay", 0L),
                         bossMaxHp = cObj.optInt("bossMaxHp", 100),
                         bossBonusShieldHp = cObj.optInt("bossBonusShieldHp", 0),
-                        isChainCompleted = cObj.optBoolean("isChainCompleted", false)
+                        isChainCompleted = cObj.optBoolean("isChainCompleted", false),
+                        linkedPreviousChainId = if (cObj.has("linkedPreviousChainId") && !cObj.isNull("linkedPreviousChainId")) {
+                            cObj.getString("linkedPreviousChainId")
+                        } else null
                     )
                 )
             }
@@ -160,6 +175,7 @@ data class ChronosFullBackupDto(
             val slicesArray = root.optJSONArray("slices") ?: JSONArray()
             for (i in 0 until slicesArray.length()) {
                 val sObj = slicesArray.getJSONObject(i)
+                val scheduledEpoch = sObj.getLong("scheduledDateEpochDay")
                 slices.add(
                     DailyTaskSlice(
                         sliceId = sObj.getString("sliceId"),
@@ -169,15 +185,23 @@ data class ChronosFullBackupDto(
                         displayTitle = sObj.getString("displayTitle"),
                         shortBadge = sObj.getString("shortBadge"),
                         phaseTag = sObj.optString("phaseTag", "Standard Slice"),
-                        scheduledDateEpochDay = sObj.getLong("scheduledDateEpochDay"),
+                        scheduledDateEpochDay = scheduledEpoch,
                         problemsCompleted = sObj.optInt("problemsCompleted", 0),
                         problemsTarget = sObj.optInt("problemsTarget", 5),
                         isCompleted = sObj.optBoolean("isCompleted", false),
-                        completedAtTimestamp = if (sObj.has("completedAtTimestamp")) sObj.getLong("completedAtTimestamp") else null,
+                        completedAtTimestamp = if (sObj.has("completedAtTimestamp") && !sObj.isNull("completedAtTimestamp")) {
+                            sObj.getLong("completedAtTimestamp")
+                        } else null,
                         isRetentionEcho = sObj.optBoolean("isRetentionEcho", false),
-                        echoIntervalDays = if (sObj.has("echoIntervalDays")) sObj.getInt("echoIntervalDays") else null,
-                        sliceEnergyOverride = if (sObj.has("sliceEnergyOverride")) safeEnumOrNull<EnergyLevel>(sObj.getString("sliceEnergyOverride")) else null,
-                        xpMultiplier = sObj.optInt("xpMultiplier", 1)
+                        echoIntervalDays = if (sObj.has("echoIntervalDays") && !sObj.isNull("echoIntervalDays")) {
+                            sObj.getInt("echoIntervalDays")
+                        } else null,
+                        sliceEnergyOverride = if (sObj.has("sliceEnergyOverride") && !sObj.isNull("sliceEnergyOverride")) {
+                            safeEnumOrNull<EnergyLevel>(sObj.getString("sliceEnergyOverride"))
+                        } else null,
+                        xpMultiplier = sObj.optInt("xpMultiplier", 1),
+                        originalScheduledEpochDay = sObj.optLong("originalScheduledEpochDay", scheduledEpoch),
+                        shiftLagCount = sObj.optInt("shiftLagCount", 0)
                     )
                 )
             }
@@ -214,6 +238,16 @@ data class ChronosFullBackupDto(
                 )
             }
 
+            val customSubjectsJson = if (root.has("customSubjectsJson") && !root.isNull("customSubjectsJson")) {
+                root.getString("customSubjectsJson")
+            } else null
+            val chainLinksJson = if (root.has("chainLinksJson") && !root.isNull("chainLinksJson")) {
+                root.getString("chainLinksJson")
+            } else null
+            val batchExamsJson = if (root.has("batchExamsJson") && !root.isNull("batchExamsJson")) {
+                root.getString("batchExamsJson")
+            } else null
+
             return ChronosFullBackupDto(
                 backupVersion = version,
                 exportTimestamp = exportTime,
@@ -221,7 +255,10 @@ data class ChronosFullBackupDto(
                 chains = chains,
                 slices = slices,
                 exams = exams,
-                neuroSessions = neuroSessions
+                neuroSessions = neuroSessions,
+                customSubjectsJson = customSubjectsJson,
+                chainLinksJson = chainLinksJson,
+                batchExamsJson = batchExamsJson
             )
         }
 

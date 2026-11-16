@@ -634,7 +634,7 @@ private fun LiveCountdownHeroCard(
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             CountdownUnitBox(
-                value = if (daysRemaining > 0L) displayDays.toString() else "0",
+                value = if (daysRemaining > 0L) daysRemaining.toString() else "0",
                 label = "DAYS",
                 accentColor = urgencyColor,
                 modifier = Modifier.weight(1f)

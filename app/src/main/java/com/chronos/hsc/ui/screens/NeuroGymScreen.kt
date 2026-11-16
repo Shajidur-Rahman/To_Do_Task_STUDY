@@ -725,17 +725,22 @@ private fun FovealSingularityLockDrill(
 
     // Timer loop that ONLY advances while thumb is physically holding the anchor
     LaunchedEffect(isThumbHolding, isCompleted, selectedDurationSec) {
-        if (!isThumbHolding || isCompleted) return@LaunchedEffect
+        if (!isThumbHolding || isCompleted) {
+            sparkOffsetNormalized = null
+            return@LaunchedEffect
+        }
         var lastTickSecond = (remainingMillis / 1000L).toInt()
         var nextSparkCountdownMs = Random.nextLong(6_000L, 10_000L)
+        var sparkSpawnedForCycle = false
 
         while (isThumbHolding && remainingMillis > 0L) {
             delay(100L)
             remainingMillis = (remainingMillis - 100L).coerceAtLeast(0L)
 
-            // Peripheral distraction spark every 6-10s for 900ms
+            // Peripheral distraction spark every 6-10s for 900ms (single stationary position per flash)
             nextSparkCountdownMs -= 100L
-            if (nextSparkCountdownMs <= 0L) {
+            if (nextSparkCountdownMs <= 0L && !sparkSpawnedForCycle) {
+                sparkSpawnedForCycle = true
                 val angle = Random.nextDouble(0.0, 2 * PI)
                 val radius = Random.nextDouble(0.72, 0.92).toFloat()
                 sparkOffsetNormalized = Offset(
@@ -745,6 +750,7 @@ private fun FovealSingularityLockDrill(
             }
             if (nextSparkCountdownMs <= -900L) {
                 sparkOffsetNormalized = null
+                sparkSpawnedForCycle = false
                 nextSparkCountdownMs = Random.nextLong(6_000L, 10_000L)
             }
 
@@ -757,6 +763,7 @@ private fun FovealSingularityLockDrill(
 
             if (remainingMillis <= 0L && !isCompleted) {
                 isCompleted = true
+                isThumbHolding = false
                 sparkOffsetNormalized = null
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onComplete(selectedDurationSec)
@@ -984,6 +991,7 @@ private fun FovealSingularityLockDrill(
                                 onClick = {
                                     remainingMillis = selectedDurationSec * 1000L
                                     isCompleted = false
+                                    isThumbHolding = false
                                     didBreakGazeWarning = false
                                 },
                                 colors = ButtonDefaults.buttonColors(
@@ -1098,12 +1106,13 @@ private fun SchulteGridSpeedTrainerDrill(
     var penaltyMillis by remember { mutableLongStateOf(0L) }
     var isRunning by remember { mutableStateOf(true) }
     var isCompleted by remember { mutableStateOf(false) }
+    var sessionToken by remember { mutableIntStateOf(0) }
     var hardModeShuffleEveryTap by remember { mutableStateOf(false) }
 
     var flashedGreenCellNumber by remember { mutableIntStateOf(-1) }
     var flashedRedCellNumber by remember { mutableIntStateOf(-1) }
 
-    LaunchedEffect(isRunning, isCompleted) {
+    LaunchedEffect(isRunning, isCompleted, sessionToken) {
         if (!isRunning || isCompleted) return@LaunchedEffect
         val startNs = System.nanoTime()
         val baseElapsed = elapsedMillis
@@ -1177,6 +1186,7 @@ private fun SchulteGridSpeedTrainerDrill(
                         penaltyMillis = 0L
                         isCompleted = false
                         isRunning = true
+                        sessionToken++
                     }
                 ) {
                     Icon(
@@ -2353,7 +2363,7 @@ private fun ChimpFlashMemoryVaultDrill(
     var isMaskedPhase by remember { mutableStateOf(false) }
     var clearedCells by remember { mutableStateOf(setOf<Int>()) }
     var isGameOver by remember { mutableStateOf(false) }
-    val startTimestampMs = remember { System.currentTimeMillis() }
+    var startTimestampMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     Column(
         modifier = Modifier
@@ -2508,11 +2518,13 @@ private fun ChimpFlashMemoryVaultDrill(
                                             livesRemaining--
                                             if (livesRemaining <= 0) {
                                                 isGameOver = true
-                                                val elapsedSec =
-                                                    ((System.currentTimeMillis() - startTimestampMs) / 1000L)
-                                                        .toInt()
-                                                        .coerceAtLeast(1)
-                                                onComplete(peakLevelReached, elapsedSec)
+                                                if (peakLevelReached > 0) {
+                                                    val elapsedSec =
+                                                        ((System.currentTimeMillis() - startTimestampMs) / 1000L)
+                                                            .toInt()
+                                                            .coerceAtLeast(1)
+                                                    onComplete(peakLevelReached, elapsedSec)
+                                                }
                                             } else {
                                                 // Reset current level
                                                 cellToNumberMap = generateChimpBoard(currentLevel)
@@ -2553,7 +2565,11 @@ private fun ChimpFlashMemoryVaultDrill(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "🦍 CHIMP VAULT COMPLETE • PEAK SPAN: LEVEL $peakLevelReached (+25 XP)",
+                        text = if (peakLevelReached > 0) {
+                            "🦍 CHIMP VAULT COMPLETE • PEAK SPAN: LEVEL $peakLevelReached (+25 XP)"
+                        } else {
+                            "🦍 CHIMP VAULT OVER • CLEAR LEVEL 5+ TO EARN XP"
+                        },
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 13.sp,
@@ -2572,13 +2588,14 @@ private fun ChimpFlashMemoryVaultDrill(
                         Button(
                             onClick = {
                                 currentLevel = 5
-                                peakLevelReached = 5
+                                peakLevelReached = 0
                                 livesRemaining = 3
                                 cellToNumberMap = generateChimpBoard(5)
                                 clearedCells = emptySet()
                                 nextExpectedNumber = 1
                                 isMaskedPhase = false
                                 isGameOver = false
+                                startTimestampMs = System.currentTimeMillis()
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = CyberCyan,
@@ -2621,6 +2638,14 @@ private fun OculomotorFigure8PursuitDrill(
     onComplete: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val view = LocalView.current
+
+    DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose {
+            view.keepScreenOn = false
+        }
+    }
 
     var elapsedMillisForCanvas by remember { mutableLongStateOf(0L) }
     var secondsLeft by remember { mutableIntStateOf(60) }

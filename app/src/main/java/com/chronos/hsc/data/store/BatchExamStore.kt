@@ -85,22 +85,31 @@ data class BatchExamRecord(
         if (!subMatch) return false
 
         // 2. Check paper match
-        if (paperName.isNotBlank() && paperName != "Single Paper" && slice.chain.paper != HscPaper.SINGLE) {
-            val isFirstPaper = paperName.contains("1st", ignoreCase = true) || paperName.contains("1", ignoreCase = true)
-            val isSecondPaper = paperName.contains("2nd", ignoreCase = true) || paperName.contains("2", ignoreCase = true)
-            if (isFirstPaper && slice.chain.paper != HscPaper.FIRST_PAPER) return false
-            if (isSecondPaper && slice.chain.paper != HscPaper.SECOND_PAPER) return false
+        if (paperName.isNotBlank() && !paperName.equals("Single Paper", ignoreCase = true) && slice.chain.paper != HscPaper.SINGLE) {
+            val isFirstPaper = paperName.contains("1st", ignoreCase = true) ||
+                paperName.contains("first", ignoreCase = true) ||
+                paperName.contains("১ম") ||
+                paperName.trim() == "1"
+            val isSecondPaper = paperName.contains("2nd", ignoreCase = true) ||
+                paperName.contains("second", ignoreCase = true) ||
+                paperName.contains("২য়") ||
+                paperName.trim() == "2"
+            if (isFirstPaper && !isSecondPaper && slice.chain.paper != HscPaper.FIRST_PAPER) return false
+            if (isSecondPaper && !isFirstPaper && slice.chain.paper != HscPaper.SECOND_PAPER) return false
         }
 
-        // 3. Check chapter match (numeric regex or string match)
+        // 3. Check chapter match (ASCII digits, Bangla digits, or chapter name)
         val chNum = slice.chain.chapterNumber.toString()
+        val bnChNum = com.chronos.hsc.data.local.HscSyllabusCatalog.toBanglaDigits(slice.chain.chapterNumber)
         val cleanChapters = chapterNumbersAndTitles.trim()
         val regex = Regex("""\b$chNum\b""")
         val chMatches = regex.containsMatchIn(cleanChapters) ||
-                cleanChapters.contains("Ch $chNum", ignoreCase = true) ||
-                cleanChapters.contains("Chapter $chNum", ignoreCase = true) ||
-                cleanChapters.contains("অধ্যায় $chNum", ignoreCase = true) ||
-                (slice.chain.chapterName.isNotBlank() && cleanChapters.contains(slice.chain.chapterName, ignoreCase = true))
+            cleanChapters.contains("Ch $chNum", ignoreCase = true) ||
+            cleanChapters.contains("Chapter $chNum", ignoreCase = true) ||
+            cleanChapters.contains("অধ্যায় $chNum", ignoreCase = true) ||
+            cleanChapters.contains("অধ্যায় $bnChNum", ignoreCase = true) ||
+            cleanChapters.contains(bnChNum) ||
+            (slice.chain.chapterName.isNotBlank() && cleanChapters.contains(slice.chain.chapterName, ignoreCase = true))
 
         return chMatches
     }
@@ -318,7 +327,8 @@ object BatchExamStore {
         return _batchExamsFlow.value
             .filter { !it.isCompleted }
             .sortedWith(
-                compareBy<BatchExamRecord> { it.daysLeft(today) }
+                compareBy<BatchExamRecord> { it.daysLeft(today) < 0L }
+                    .thenBy { kotlin.math.abs(it.daysLeft(today)) }
                     .thenByDescending { it.aiImportanceScore }
             )
     }

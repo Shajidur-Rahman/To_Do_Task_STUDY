@@ -160,6 +160,7 @@ fun TaskRouletteModal(
 
     val spinRoulette: () -> Unit = {
         if (!isSpinning && incompleteSlices.isNotEmpty()) {
+            val previousLockedId = lockedItem?.slice?.sliceId
             isSpinning = true
             isAiAnalyzing = true
             lockedItem = null
@@ -204,8 +205,13 @@ fun TaskRouletteModal(
                 aiRecommendation = rec
                 isAiAnalyzing = false
 
+                if (incompleteSlices.isEmpty()) {
+                    isSpinning = false
+                    return@launch
+                }
+
                 val winner = incompleteSlices.find { it.slice.sliceId == rec?.selectedSliceId }
-                    ?: incompleteSlices.random()
+                    ?: incompleteSlices.filter { it.slice.sliceId != previousLockedId }.ifEmpty { incompleteSlices }.random()
                 val targetWinnerIdx = incompleteSlices.indexOf(winner).coerceAtLeast(0)
 
                 val currentMod = step % poolSize
@@ -299,7 +305,15 @@ fun TaskRouletteModal(
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { showSettingsDialog = true }) {
+                            IconButton(
+                                onClick = {
+                                    if (CustomSubjectAndAiStore.isRouletteUnlocked()) {
+                                        showSettingsDialog = true
+                                    } else {
+                                        showPasscodeDialog = true
+                                    }
+                                }
+                            ) {
                                 Icon(
                                     imageVector = Icons.Default.Settings,
                                     contentDescription = "AI Settings",
@@ -437,7 +451,7 @@ fun TaskRouletteModal(
                     }
 
                     // 4. 60-Second Acceptance Window OR Active 25-Minute Micro-Sprint Timer
-                    if (sprintTimerState != null) {
+                    if (sprintTimerState != null && !isSpinning) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -496,7 +510,11 @@ fun TaskRouletteModal(
                                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "Accept & Start 25m Sprint (2x XP)",
+                                            text = if (sprintTimerState.acceptanceSecondsRemaining > 0) {
+                                                "Accept & Start 25m Sprint (2x XP)"
+                                            } else {
+                                                "Start 25m Sprint"
+                                            },
                                             fontWeight = FontWeight.ExtraBold
                                         )
                                     }
@@ -523,9 +541,9 @@ fun TaskRouletteModal(
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = if (sprintTimerState.isSprintPaused) {
-                                                "MICRO-SPRINT PAUSED • 2X XP"
+                                                "MICRO-SPRINT PAUSED${if (sprintTimerState.has2xMultiplier) " • 2X XP" else ""}"
                                             } else {
-                                                "MICRO-SPRINT ACTIVE • 2X XP ATTACHED"
+                                                "MICRO-SPRINT ACTIVE${if (sprintTimerState.has2xMultiplier) " • 2X XP ATTACHED" else ""}"
                                             },
                                             fontFamily = FontFamily.Monospace,
                                             fontWeight = FontWeight.ExtraBold,

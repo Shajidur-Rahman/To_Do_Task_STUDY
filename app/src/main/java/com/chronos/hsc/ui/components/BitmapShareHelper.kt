@@ -109,7 +109,9 @@ object BitmapShareHelper {
         // Streak Box on Right side of Hero
         textPaint.color = Color.parseColor("#FF6D00")
         textPaint.textSize = 48f
-        canvas.drawText("🔥 ${userStats.streakDays}d Streak", width - 420f, 400f, textPaint)
+        textPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText("🔥 ${userStats.streakDays}d Streak", width - 90f, 400f, textPaint)
+        textPaint.textAlign = Paint.Align.LEFT
 
         // Card 2: Pinned Exam Countdown Banner
         val examRect = RectF(60f, 510f, width - 60f, 690f)
@@ -133,10 +135,6 @@ object BitmapShareHelper {
                 LocalDate.ofEpochDay(todayEpochDay),
                 LocalDate.ofEpochDay(pinnedExam.targetDateEpochDay)
             )
-            textPaint.color = Color.WHITE
-            textPaint.textSize = 58f
-            canvas.drawText(pinnedExam.examTitle, 90f, 635f, textPaint)
-
             textPaint.color = Color.parseColor("#00E5FF")
             textPaint.textSize = 40f
             val countdownStr = when {
@@ -144,7 +142,21 @@ object BitmapShareHelper {
                 daysLeft == 0L -> "🎯 EXAM TODAY!"
                 else -> "Completed"
             }
-            canvas.drawText(countdownStr, width - 360f, 635f, textPaint)
+            val countdownWidth = textPaint.measureText(countdownStr)
+            textPaint.textAlign = Paint.Align.RIGHT
+            canvas.drawText(countdownStr, width - 90f, 635f, textPaint)
+            textPaint.textAlign = Paint.Align.LEFT
+
+            textPaint.color = Color.WHITE
+            textPaint.textSize = 54f
+            val maxTitleWidth = (width - 180f - countdownWidth - 36f).coerceAtLeast(220f)
+            val ellipsizedTitle = android.text.TextUtils.ellipsize(
+                pinnedExam.examTitle,
+                android.text.TextPaint(textPaint),
+                maxTitleWidth,
+                android.text.TextUtils.TruncateAt.END
+            ).toString()
+            canvas.drawText(ellipsizedTitle, 90f, 635f, textPaint)
         } else {
             textPaint.color = Color.parseColor("#8E9EB8")
             textPaint.textSize = 36f
@@ -229,30 +241,38 @@ object BitmapShareHelper {
     }
 
     fun shareCardBitmap(context: Context, bitmap: Bitmap) {
-        val shareDir = File(context.cacheDir, "share").apply { mkdirs() }
-        val imageFile = File(shareDir, "chronos_progress_card.png")
-        FileOutputStream(imageFile).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.flush()
+        try {
+            val shareDir = File(context.cacheDir, "share").apply { mkdirs() }
+            val imageFile = File(shareDir, "chronos_progress_card.png")
+            FileOutputStream(imageFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                out.flush()
+            }
+
+            val contentUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                imageFile
+            )
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                putExtra(Intent.EXTRA_SUBJECT, "Chronos HSC Study Progress")
+                putExtra(Intent.EXTRA_TEXT, "Conquering the HSC Syllabus with Chronos HSC: Smart Study Engine! ⚔️🔥")
+                clipData = ClipData.newRawUri("Chronos Progress Card", contentUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            val chooser = Intent.createChooser(shareIntent, "Share Chronos Progress Card")
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(
+                context,
+                "Unable to share progress card: ${e.localizedMessage ?: "Unknown error"}",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
-
-        val contentUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            imageFile
-        )
-
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(Intent.EXTRA_STREAM, contentUri)
-            putExtra(Intent.EXTRA_SUBJECT, "Chronos HSC Study Progress")
-            putExtra(Intent.EXTRA_TEXT, "Conquering the HSC Syllabus with Chronos HSC: Smart Study Engine! ⚔️🔥")
-            clipData = ClipData.newRawUri("Chronos Progress Card", contentUri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-
-        val chooser = Intent.createChooser(shareIntent, "Share Chronos Progress Card")
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
     }
 }

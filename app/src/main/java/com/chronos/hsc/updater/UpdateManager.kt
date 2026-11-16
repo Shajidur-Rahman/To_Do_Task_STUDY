@@ -37,9 +37,10 @@ class UpdateManager(private val context: Context) {
 
     suspend fun checkForUpdates(): AppUpdateInfo? {
         return withContext(Dispatchers.IO) {
+            var connection: HttpURLConnection? = null
             try {
                 val urlWithCacheBuster = "$REMOTE_VERSION_URL?t=${System.currentTimeMillis()}"
-                val connection = (URL(urlWithCacheBuster).openConnection() as HttpURLConnection).apply {
+                connection = (URL(urlWithCacheBuster).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 8000
                     readTimeout = 8000
                     requestMethod = "GET"
@@ -69,6 +70,8 @@ class UpdateManager(private val context: Context) {
                 }
             } catch (_: Exception) {
                 // Network unavailable or offline
+            } finally {
+                connection?.disconnect()
             }
             null
         }
@@ -91,6 +94,7 @@ class UpdateManager(private val context: Context) {
     }
 
     suspend fun downloadAndInstall(updateInfo: AppUpdateInfo) {
+        if (_downloadState.value is UpdateDownloadState.Downloading) return
         withContext(Dispatchers.IO) {
             try {
                 val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
@@ -118,9 +122,9 @@ class UpdateManager(private val context: Context) {
                 var lastErrorMessage = "Unknown network error"
 
                 for (sourceUrl in mirrorUrls) {
+                    var connection: HttpURLConnection? = null
                     try {
                         var currentUrl = sourceUrl
-                        var connection: HttpURLConnection? = null
                         var redirectCount = 0
 
                         while (true) {
@@ -134,7 +138,8 @@ class UpdateManager(private val context: Context) {
 
                             val code = connection.responseCode
                             if (code in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_SEE_OTHER, 307, 308)) {
-                                currentUrl = connection.getHeaderField("Location") ?: break
+                                val location = connection.getHeaderField("Location") ?: break
+                                currentUrl = URL(URL(currentUrl), location).toString()
                                 redirectCount++
                                 if (redirectCount > 8) break
                             } else {
@@ -145,7 +150,6 @@ class UpdateManager(private val context: Context) {
                         val finalConn = connection ?: continue
                         if (finalConn.responseCode !in 200..299) {
                             lastErrorMessage = "HTTP ${finalConn.responseCode} on $sourceUrl"
-                            finalConn.disconnect()
                             continue
                         }
 
@@ -179,7 +183,6 @@ class UpdateManager(private val context: Context) {
                                 output.flush()
                             }
                         }
-                        finalConn.disconnect()
 
                         if (targetApk.exists() && targetApk.length() > 1_000_000L) {
                             downloadSuccess = true
@@ -190,6 +193,8 @@ class UpdateManager(private val context: Context) {
                         }
                     } catch (e: Exception) {
                         lastErrorMessage = e.localizedMessage ?: "Connection error"
+                    } finally {
+                        connection?.disconnect()
                     }
                 }
 

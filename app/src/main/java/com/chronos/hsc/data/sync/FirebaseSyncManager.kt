@@ -25,6 +25,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -154,6 +155,9 @@ class FirebaseSyncManager(
 
     @Volatile
     private var isApplyingRemoteUpdate = false
+
+    @Volatile
+    private var pendingPushAfterRemoteApply = false
 
     init {
         instance = this
@@ -301,6 +305,8 @@ class FirebaseSyncManager(
     fun signOutKeepLocalData(context: Context, onComplete: (() -> Unit)? = null) {
         scheduledPushJob?.cancel()
         detachListeners()
+        pendingPushAfterRemoteApply = false
+        pendingOrphanSlices.clear()
         syncScope.launch {
             try {
                 auth?.signOut()
@@ -352,11 +358,33 @@ class FirebaseSyncManager(
     }
 
     fun removeChainTombstonesForRestore(chainId: String, sliceIds: List<String>) {
+        val allIdsToRestore = (listOf(chainId) + sliceIds)
         synchronized(localPrefsLock) {
-            removeIdsFromSetPref(KEY_TOMBSTONE_CHAINS, listOf(chainId))
-            if (sliceIds.isNotEmpty()) {
-                removeIdsFromSetPref(KEY_TOMBSTONE_SLICES, sliceIds)
-            }
+            removeIdsFromSetPref(KEY_TOMBSTONE_CHAINS, allIdsToRestore)
+            removeIdsFromSetPref(KEY_TOMBSTONE_SLICES, allIdsToRestore)
+            removeIdsFromSetPref(KEY_TOMBSTONE_EXAMS, allIdsToRestore)
+        }
+    }
+
+    fun clearTombstonesForFullRestore(
+        restoredChainIds: Collection<String>,
+        restoredSliceIds: Collection<String>,
+        restoredExamIds: Collection<String>,
+        wipedChainIds: Collection<String>,
+        wipedSliceIds: Collection<String>,
+        wipedExamIds: Collection<String>
+    ) {
+        val restoredChainSet = restoredChainIds.toSet()
+        val restoredSliceSet = restoredSliceIds.toSet()
+        val restoredExamSet = restoredExamIds.toSet()
+        val allRestored = restoredChainSet + restoredSliceSet + restoredExamSet
+        synchronized(localPrefsLock) {
+            removeIdsFromSetPref(KEY_TOMBSTONE_CHAINS, allRestored)
+            removeIdsFromSetPref(KEY_TOMBSTONE_SLICES, allRestored)
+            removeIdsFromSetPref(KEY_TOMBSTONE_EXAMS, allRestored)
+            addIdsToSetPref(KEY_TOMBSTONE_CHAINS, wipedChainIds.filter { it !in restoredChainSet })
+            addIdsToSetPref(KEY_TOMBSTONE_SLICES, wipedSliceIds.filter { it !in restoredSliceSet })
+            addIdsToSetPref(KEY_TOMBSTONE_EXAMS, wipedExamIds.filter { it !in restoredExamSet })
         }
     }
 
@@ -389,7 +417,10 @@ class FirebaseSyncManager(
     // =========================================================================
 
     fun scheduleCloudPush() {
-        if (isApplyingRemoteUpdate) return
+        if (isApplyingRemoteUpdate) {
+            pendingPushAfterRemoteApply = true
+            return
+        }
         val currentUser = try {
             auth?.currentUser
         } catch (_: Exception) {
@@ -477,12 +508,10 @@ class FirebaseSyncManager(
                     )
                 )
 
-                val allTombstones = (deletedChains + deletedSlices + deletedExams).toList().takeLast(MAX_TOMBSTONES)
                 val sharedMeta = hashMapOf<String, Any?>(
                     "batchExamsJson" to BatchExamStore.exportToJsonString(localBatchExams),
                     "customSubjectsJson" to CustomSubjectAndAiStore.exportCustomSubjectsJson(localCustomSubjects),
                     "chainLinksJson" to CustomSubjectAndAiStore.exportChainLinksJson(localChainLinks),
-                    "deletedTombstoneIds" to allTombstones,
                     "deletedChainIds" to deletedChains.toList().takeLast(MAX_TOMBSTONES),
                     "deletedSliceIds" to deletedSlices.toList().takeLast(MAX_TOMBSTONES),
                     "deletedExamCountdownIds" to deletedExams.toList().takeLast(MAX_TOMBSTONES),
@@ -561,8 +590,7 @@ class FirebaseSyncManager(
                 val cloudStatsSnap = userDoc.collection("meta").document("user_stats").get().await()
                 val cloudSharedSnap = userDoc.collection("meta").document("shared_stores").get().await()
 
-                // Parse tombstones cleanly (ONLY items user explicitly deleted)
-                val cloudTombstonesGeneric = cloudSharedSnap.getStringList("deletedTombstoneIds").toSet()
+                // Parse tombstones cleanly (ONLY items user explicitly deleted per entity type)
                 val cloudDeletedChains = cloudSharedSnap.getStringList("deletedChainIds").toSet()
                 val cloudDeletedSlices = cloudSharedSnap.getStringList("deletedSliceIds").toSet()
                 val cloudDeletedExams = cloudSharedSnap.getStringList("deletedExamCountdownIds").toSet()
@@ -575,9 +603,9 @@ class FirebaseSyncManager(
                 val localDeletedBatchExams = getIdSetPref(KEY_TOMBSTONE_BATCH_EXAMS)
                 val localDeletedCustomSubs = getIdSetPref(KEY_TOMBSTONE_CUSTOM_SUBJECTS)
 
-                val allDeletedChains = (localDeletedChains + cloudDeletedChains + cloudTombstonesGeneric)
-                val allDeletedSlices = (localDeletedSlices + cloudDeletedSlices + cloudTombstonesGeneric)
-                val allDeletedExams = (localDeletedExams + cloudDeletedExams + cloudTombstonesGeneric)
+                val allDeletedChains = (localDeletedChains + cloudDeletedChains)
+                val allDeletedSlices = (localDeletedSlices + cloudDeletedSlices)
+                val allDeletedExams = (localDeletedExams + cloudDeletedExams)
                 val allDeletedBatchExams = (localDeletedBatchExams + cloudDeletedBatchExams)
                 val allDeletedCustomSubs = (localDeletedCustomSubs + cloudDeletedCustomSubs)
 
@@ -613,12 +641,16 @@ class FirebaseSyncManager(
                         localC != null && cloudC == null -> localC
                         localC == null && cloudC != null -> cloudC
                         localC != null && cloudC != null -> {
-                            val base = if (cloudTs > localTs) cloudC else localC
-                            base.copy(
-                                isChainCompleted = localC.isChainCompleted || cloudC.isChainCompleted,
-                                totalDays = maxOf(localC.totalDays, cloudC.totalDays),
-                                bossMaxHp = maxOf(localC.bossMaxHp, cloudC.bossMaxHp)
-                            )
+                            if (localTs > 0L && cloudTs > 0L && cloudTs != localTs) {
+                                if (cloudTs > localTs) cloudC else localC
+                            } else {
+                                val base = if (cloudTs > localTs) cloudC else localC
+                                base.copy(
+                                    isChainCompleted = localC.isChainCompleted || cloudC.isChainCompleted,
+                                    totalDays = maxOf(localC.totalDays, cloudC.totalDays),
+                                    bossMaxHp = maxOf(localC.bossMaxHp, cloudC.bossMaxHp)
+                                )
+                            }
                         }
                         else -> null
                     }
@@ -668,14 +700,22 @@ class FirebaseSyncManager(
                     saveTimestampMap(KEY_CHAIN_MOD_TIMES, updatedChainTs)
                 }
 
-                // 3C. UserStats (XP, Level, Streak — Highest Progress Wins)
+                // 3C. UserStats (XP, Level, Streak — Latest Study Day Streak Wins)
                 val cloudStats = cloudStatsSnap.toUserStats()
                 val mergedTotalXp = maxOf(localStats.totalXp, cloudStats?.totalXp ?: 0)
+                val localLastDay = localStats.lastStudyEpochDay ?: Long.MIN_VALUE
+                val cloudLastDay = cloudStats?.lastStudyEpochDay ?: Long.MIN_VALUE
+                val resolvedStreak = when {
+                    cloudStats == null -> localStats.streakDays
+                    cloudLastDay > localLastDay -> cloudStats.streakDays
+                    localLastDay > cloudLastDay -> localStats.streakDays
+                    else -> maxOf(localStats.streakDays, cloudStats.streakDays)
+                }
                 val mergedStats = UserStats(
                     id = 1,
                     totalXp = mergedTotalXp,
                     currentLevel = maxOf(localStats.currentLevel, cloudStats?.currentLevel ?: 1, (mergedTotalXp / 500) + 1),
-                    streakDays = maxOf(localStats.streakDays, cloudStats?.streakDays ?: 0),
+                    streakDays = resolvedStreak,
                     lastStudyEpochDay = listOfNotNull(localStats.lastStudyEpochDay, cloudStats?.lastStudyEpochDay).maxOrNull()
                 )
 
@@ -746,7 +786,7 @@ class FirebaseSyncManager(
                     BatchExamStore.replaceAllFromSync(mergedBatchExams)
                     ChronosWidgetUpdater.requestUpdate(appContext)
                 } finally {
-                    isApplyingRemoteUpdate = false
+                    finishApplyingRemoteUpdateLocked()
                 }
 
                 // 5. Commit Merged State & Tombstones back to Firestore via Chunked WriteBatch (<= 400 ops)
@@ -793,12 +833,11 @@ class FirebaseSyncManager(
                     )
                 )
 
-                val allGenericTombstones = (allDeletedChains + allDeletedSlices + allDeletedExams).toList().takeLast(MAX_TOMBSTONES)
                 val mergedSharedMap = hashMapOf<String, Any?>(
                     "batchExamsJson" to BatchExamStore.exportToJsonString(mergedBatchExams),
                     "customSubjectsJson" to CustomSubjectAndAiStore.exportCustomSubjectsJson(mergedCustomSubjects),
                     "chainLinksJson" to CustomSubjectAndAiStore.exportChainLinksJson(mergedChainLinks),
-                    "deletedTombstoneIds" to allGenericTombstones,
+                    "deletedTombstoneIds" to emptyList<String>(),
                     "deletedChainIds" to allDeletedChains.toList().takeLast(MAX_TOMBSTONES),
                     "deletedSliceIds" to allDeletedSlices.toList().takeLast(MAX_TOMBSTONES),
                     "deletedExamCountdownIds" to allDeletedExams.toList().takeLast(MAX_TOMBSTONES),
@@ -822,12 +861,16 @@ class FirebaseSyncManager(
                 _syncStatus.value = SyncStatus.SYNCED_LIVE
 
                 // 6. Attach Live Multi-Device Realtime Listeners
-                startRealtimeListenersLocked(db, uid)
+                if (auth?.currentUser?.uid == uid) {
+                    startRealtimeListenersLocked(db, uid)
+                }
                 true
             } catch (e: Exception) {
                 _syncErrorMessage.value = e.localizedMessage ?: "Cloud sync error"
                 _syncStatus.value = SyncStatus.SYNC_ERROR
-                startRealtimeListenersLocked(db, uid)
+                if (auth?.currentUser?.uid == uid) {
+                    startRealtimeListenersLocked(db, uid)
+                }
                 false
             }
         }
@@ -841,6 +884,7 @@ class FirebaseSyncManager(
         activeListeners += userDoc.collection("chains").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             val remoteDocs = snapshot.documentChanges.mapNotNull { change ->
+                if (change.type == DocumentChange.Type.REMOVED) return@mapNotNull null
                 val doc = change.document
                 if (doc.getString("lastUpdatedByDeviceId") == localDeviceId) return@mapNotNull null
                 doc
@@ -865,6 +909,8 @@ class FirebaseSyncManager(
 
                             val resolved = if (localChain == null) {
                                 remoteChain
+                            } else if (localTs > 0L && remoteTs > 0L && remoteTs != localTs) {
+                                if (remoteTs > localTs) remoteChain else localChain
                             } else {
                                 val base = if (remoteTs >= localTs) remoteChain else localChain
                                 base.copy(
@@ -890,7 +936,7 @@ class FirebaseSyncManager(
                         }
                         markLiveSyncSuccess()
                     } finally {
-                        isApplyingRemoteUpdate = false
+                        finishApplyingRemoteUpdateLocked()
                     }
                 }
             }
@@ -900,6 +946,7 @@ class FirebaseSyncManager(
         activeListeners += userDoc.collection("slices").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             val remoteDocs = snapshot.documentChanges.mapNotNull { change ->
+                if (change.type == DocumentChange.Type.REMOVED) return@mapNotNull null
                 val doc = change.document
                 if (doc.getString("lastUpdatedByDeviceId") == localDeviceId) return@mapNotNull null
                 doc
@@ -951,7 +998,7 @@ class FirebaseSyncManager(
                         }
                         markLiveSyncSuccess()
                     } finally {
-                        isApplyingRemoteUpdate = false
+                        finishApplyingRemoteUpdateLocked()
                     }
                 }
             }
@@ -961,6 +1008,7 @@ class FirebaseSyncManager(
         activeListeners += userDoc.collection("exam_countdowns").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             val remoteDocs = snapshot.documentChanges.mapNotNull { change ->
+                if (change.type == DocumentChange.Type.REMOVED) return@mapNotNull null
                 val doc = change.document
                 if (doc.getString("lastUpdatedByDeviceId") == localDeviceId) return@mapNotNull null
                 doc
@@ -981,7 +1029,7 @@ class FirebaseSyncManager(
                         }
                         markLiveSyncSuccess()
                     } finally {
-                        isApplyingRemoteUpdate = false
+                        finishApplyingRemoteUpdateLocked()
                     }
                 }
             }
@@ -991,6 +1039,7 @@ class FirebaseSyncManager(
         activeListeners += userDoc.collection("neuro_sessions").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             val remoteDocs = snapshot.documentChanges.mapNotNull { change ->
+                if (change.type == DocumentChange.Type.REMOVED) return@mapNotNull null
                 val doc = change.document
                 if (doc.getString("lastUpdatedByDeviceId") == localDeviceId) return@mapNotNull null
                 doc
@@ -1007,7 +1056,7 @@ class FirebaseSyncManager(
                         }
                         markLiveSyncSuccess()
                     } finally {
-                        isApplyingRemoteUpdate = false
+                        finishApplyingRemoteUpdateLocked()
                     }
                 }
             }
@@ -1017,6 +1066,7 @@ class FirebaseSyncManager(
         activeListeners += userDoc.collection("meta").addSnapshotListener { snapshot, error ->
             if (error != null || snapshot == null) return@addSnapshotListener
             val remoteDocs = snapshot.documentChanges.mapNotNull { change ->
+                if (change.type == DocumentChange.Type.REMOVED) return@mapNotNull null
                 val doc = change.document
                 if (doc.getString("lastUpdatedByDeviceId") == localDeviceId) return@mapNotNull null
                 doc
@@ -1033,11 +1083,18 @@ class FirebaseSyncManager(
                                     val cloudStats = doc.toUserStats() ?: continue
                                     val localStats = dao.getUserStatsSnapshot() ?: UserStats()
                                     val mergedXp = maxOf(localStats.totalXp, cloudStats.totalXp)
+                                    val localLastDay = localStats.lastStudyEpochDay ?: Long.MIN_VALUE
+                                    val cloudLastDay = cloudStats.lastStudyEpochDay ?: Long.MIN_VALUE
+                                    val resolvedStreak = when {
+                                        cloudLastDay > localLastDay -> cloudStats.streakDays
+                                        localLastDay > cloudLastDay -> localStats.streakDays
+                                        else -> maxOf(localStats.streakDays, cloudStats.streakDays)
+                                    }
                                     val merged = UserStats(
                                         id = 1,
                                         totalXp = mergedXp,
                                         currentLevel = maxOf(localStats.currentLevel, cloudStats.currentLevel, (mergedXp / 500) + 1),
-                                        streakDays = maxOf(localStats.streakDays, cloudStats.streakDays),
+                                        streakDays = resolvedStreak,
                                         lastStudyEpochDay = listOfNotNull(localStats.lastStudyEpochDay, cloudStats.lastStudyEpochDay).maxOrNull()
                                     )
                                     if (merged != localStats) {
@@ -1046,10 +1103,9 @@ class FirebaseSyncManager(
                                 }
 
                                 "shared_stores" -> {
-                                    val cloudGeneric = doc.getStringList("deletedTombstoneIds").toSet()
-                                    val cloudDelChains = (doc.getStringList("deletedChainIds") + cloudGeneric).toSet()
-                                    val cloudDelSlices = (doc.getStringList("deletedSliceIds") + cloudGeneric).toSet()
-                                    val cloudDelExams = (doc.getStringList("deletedExamCountdownIds") + cloudGeneric).toSet()
+                                    val cloudDelChains = doc.getStringList("deletedChainIds").toSet()
+                                    val cloudDelSlices = doc.getStringList("deletedSliceIds").toSet()
+                                    val cloudDelExams = doc.getStringList("deletedExamCountdownIds").toSet()
                                     val cloudDelBatch = doc.getStringList("deletedBatchExamIds").toSet()
                                     val cloudDelCustom = doc.getStringList("deletedCustomSubjectIds").toSet()
 
@@ -1083,11 +1139,12 @@ class FirebaseSyncManager(
                                     )
                                     CustomSubjectAndAiStore.replaceAllCustomSubjectsFromSync(mergedCustomSubs)
 
+                                    val cloudChainLinks = CustomSubjectAndAiStore.parseChainLinksJson(doc.getString("chainLinksJson"))
                                     val mergedLinks = mergeChainLinks(
                                         local = CustomSubjectAndAiStore.getAllChainLinks(),
-                                        cloud = CustomSubjectAndAiStore.parseChainLinksJson(doc.getString("chainLinksJson")),
+                                        cloud = cloudChainLinks,
                                         deletedChainIds = getIdSetPref(KEY_TOMBSTONE_CHAINS),
-                                        validChainIds = validChainIds
+                                        validChainIds = validChainIds + cloudChainLinks.keys
                                     )
                                     CustomSubjectAndAiStore.replaceAllChainLinksFromSync(mergedLinks)
 
@@ -1104,10 +1161,18 @@ class FirebaseSyncManager(
                         ChronosWidgetUpdater.requestUpdate(appContext)
                         markLiveSyncSuccess()
                     } finally {
-                        isApplyingRemoteUpdate = false
+                        finishApplyingRemoteUpdateLocked()
                     }
                 }
             }
+        }
+    }
+
+    private fun finishApplyingRemoteUpdateLocked() {
+        isApplyingRemoteUpdate = false
+        if (pendingPushAfterRemoteApply) {
+            pendingPushAfterRemoteApply = false
+            scheduleCloudPush()
         }
     }
 
@@ -1154,6 +1219,9 @@ class FirebaseSyncManager(
         cloud: DailyTaskSlice,
         cloudTs: Long
     ): DailyTaskSlice {
+        if (localTs > 0L && cloudTs > 0L && cloudTs != localTs) {
+            return if (cloudTs > localTs) cloud else local
+        }
         val preferCloudSchedule = when {
             cloudTs > localTs -> true
             localTs > cloudTs -> false

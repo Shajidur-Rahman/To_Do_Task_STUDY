@@ -58,6 +58,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -80,7 +81,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.chronos.hsc.data.local.HscPaper
 import com.chronos.hsc.data.local.HscSubject
+import com.chronos.hsc.data.local.HscSyllabusCatalog
 import com.chronos.hsc.data.service.GeminiRouletteService
 import com.chronos.hsc.data.store.BatchExamRecord
 import com.chronos.hsc.data.store.BatchExamStore
@@ -504,8 +507,26 @@ fun BatchExamRadarModal(
                 }
 
                 // 3. Chapter Multi-Select Chips
+                val maxChapters = remember(selectedCustomSubject, selectedDefaultSubject, isSinglePaper, paperMode) {
+                    if (selectedCustomSubject != null) {
+                        15
+                    } else {
+                        val resolvedPaper = when {
+                            isSinglePaper -> HscPaper.SINGLE
+                            paperMode == "2nd Paper" -> HscPaper.SECOND_PAPER
+                            else -> HscPaper.FIRST_PAPER
+                        }
+                        HscSyllabusCatalog.getChaptersFor(selectedDefaultSubject, resolvedPaper).size.coerceAtLeast(1)
+                    }
+                }
+                LaunchedEffect(maxChapters) {
+                    val filtered = selectedChapterNumbers.value.filter { it <= maxChapters }.toSet()
+                    if (filtered != selectedChapterNumbers.value) {
+                        selectedChapterNumbers.value = filtered.ifEmpty { setOf(1) }
+                    }
+                }
                 Text(
-                    text = "Chapter Numbers (Multi-Select):",
+                    text = "Chapter Numbers (Multi-Select • $maxChapters Chapters):",
                     fontSize = 11.sp,
                     color = TextSecondary,
                     fontWeight = FontWeight.SemiBold
@@ -515,7 +536,7 @@ fun BatchExamRadarModal(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    (1..12).forEach { ch ->
+                    (1..maxChapters).forEach { ch ->
                         val isSelected = selectedChapterNumbers.value.contains(ch)
                         Surface(
                             onClick = {
@@ -871,6 +892,16 @@ fun BatchExamRadarModal(
                         }
 
                         val daysLeft = (examDateEpochDay - todayEpochDay).coerceAtLeast(0L)
+                        val effectiveMcqCount = when (examFormatMode) {
+                            ExamFormatMode.CQ_ONLY -> 0
+                            ExamFormatMode.MCQ_ONLY -> mcqCount.coerceAtLeast(1)
+                            ExamFormatMode.MCQ_AND_CQ_BOTH -> if (mcqCount == 0 && cqCount == 0) 5 else mcqCount
+                        }
+                        val effectiveCqCount = when (examFormatMode) {
+                            ExamFormatMode.MCQ_ONLY -> 0
+                            ExamFormatMode.CQ_ONLY -> cqCount.coerceAtLeast(1)
+                            ExamFormatMode.MCQ_AND_CQ_BOTH -> if (mcqCount == 0 && cqCount == 0) 1 else cqCount
+                        }
 
                         scope.launch {
                             val aiEval = GeminiRouletteService.evaluatePrivateExamDifficulty(
@@ -878,8 +909,8 @@ fun BatchExamRadarModal(
                                 paperName = if (isSinglePaper) "Single Paper" else paperMode,
                                 chapterNumbersAndTitles = chTitleStr,
                                 examFormatMode = examFormatMode,
-                                mcqCount = mcqCount,
-                                cqCount = cqCount,
+                                mcqCount = effectiveMcqCount,
+                                cqCount = effectiveCqCount,
                                 daysLeft = daysLeft
                             )
 
@@ -890,8 +921,8 @@ fun BatchExamRadarModal(
                                 chapterNumbersAndTitles = chTitleStr,
                                 examDateEpochDay = examDateEpochDay,
                                 examFormatMode = examFormatMode,
-                                mcqCount = mcqCount,
-                                cqCount = cqCount,
+                                mcqCount = effectiveMcqCount,
+                                cqCount = effectiveCqCount,
                                 aiDifficultyScore = aiEval.difficultyScore,
                                 aiDifficultyLabel = aiEval.difficultyLabel,
                                 aiEstimatedTotalStudyHours = aiEval.estimatedTotalStudyHours,

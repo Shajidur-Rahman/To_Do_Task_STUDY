@@ -109,8 +109,8 @@ fun AccountabilityCardModal(
         }
     }
 
-    var morningEnabled by remember { mutableStateOf(morningBriefingEnabled) }
-    var dominoEnabled by remember { mutableStateOf(dominoAlertsEnabled) }
+    var morningEnabled by remember(morningBriefingEnabled) { mutableStateOf(morningBriefingEnabled) }
+    var dominoEnabled by remember(dominoAlertsEnabled) { mutableStateOf(dominoAlertsEnabled) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -255,7 +255,14 @@ fun AccountabilityCardModal(
 
                     Button(
                         onClick = {
-                            restoreLauncher.launch(arrayOf("application/json"))
+                            restoreLauncher.launch(
+                                arrayOf(
+                                    "application/json",
+                                    "text/plain",
+                                    "application/octet-stream",
+                                    "*/*"
+                                )
+                            )
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = ObsidianBackground,
@@ -510,7 +517,11 @@ private fun CyberpunkCardPreview(
                         color = TextPrimary
                     )
                     Text(
-                        text = if (daysLeft > 0L) "$daysLeft Days Left" else "EXAM TODAY",
+                        text = when {
+                            daysLeft > 0L -> "$daysLeft Days Left"
+                            daysLeft == 0L -> "EXAM TODAY"
+                            else -> "Completed"
+                        },
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 12.sp,

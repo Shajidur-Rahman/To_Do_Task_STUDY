@@ -39,11 +39,16 @@ class DailyBriefingWorker(
                     }
                 }
 
+                val effectiveStreak = if (userStats?.lastStudyEpochDay != null && userStats.lastStudyEpochDay >= todayEpochDay - 1L) {
+                    userStats.streakDays
+                } else {
+                    0
+                }
                 ChronosNotificationHelper.sendMorningBriefingNotification(
                     context = applicationContext,
                     slicesCount = pendingSlices.size,
                     previewBadges = preview,
-                    streakDays = userStats?.streakDays ?: 1,
+                    streakDays = effectiveStreak,
                     examSummary = examSummary
                 )
             }

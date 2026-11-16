@@ -37,6 +37,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -56,12 +58,13 @@ fun AiRouletteSettingsDialog(
     onDismiss: () -> Unit
 ) {
     var apiKeyInput by remember { mutableStateOf(CustomSubjectAndAiStore.getApiKey()) }
+    var showApiKey by remember { mutableStateOf(false) }
     var selectedModel by remember { mutableStateOf(CustomSubjectAndAiStore.getSelectedModel()) }
 
     val availableModels = listOf(
-        CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH to "gemini-3.8-flash (Primary Model)",
-        CustomSubjectAndAiStore.MODEL_GEMINI_3_5_FLASH to "gemini-3.5-flash (Instant Fallback)",
-        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH to "gemini-2.5-flash (Legacy Fallback)"
+        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH to "gemini-2.5-flash (Primary Model)",
+        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE to "gemini-2.5-flash-lite (Fast Fallback)",
+        CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH to "gemini-2.0-flash (Legacy Fallback)"
     )
 
     Dialog(onDismissRequest = onDismiss) {
@@ -120,6 +123,18 @@ fun AiRouletteSettingsDialog(
                     onValueChange = { apiKeyInput = it },
                     placeholder = { Text("Paste your Gemini API key", fontSize = 12.sp, color = TextMuted) },
                     singleLine = true,
+                    visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(onClick = { showApiKey = !showApiKey }) {
+                            Text(
+                                text = if (showApiKey) "HIDE" else "SHOW",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                color = CyberCyan
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CyberMagenta,

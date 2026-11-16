@@ -63,17 +63,21 @@ class ChronosStudyWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val dao = StudyDatabase.getInstance(context).studyDao()
         val todayEpoch = LocalDate.now().toEpochDay()
-        val todaySlices = dao.getSlicesForDateOnce(todayEpoch)
-        val topActiveSlice = todaySlices.firstOrNull { !it.slice.isCompleted }
-            ?: todaySlices.firstOrNull()
+        val todayAndOverdueSlices = dao.getTodayAndAllUnfinishedPastSlicesOnce(todayEpoch)
+        val topActiveSlice = todayAndOverdueSlices.firstOrNull { !it.slice.isCompleted }
         val stats = dao.getUserStatsOnce()
+        val validStreak = if (stats?.lastStudyEpochDay != null && stats.lastStudyEpochDay >= todayEpoch - 1L) {
+            stats.streakDays
+        } else {
+            0
+        }
 
         provideContent {
             GlanceTheme {
                 WidgetContent(
                     activeItem = topActiveSlice,
                     level = stats?.currentLevel ?: 1,
-                    streakDays = stats?.streakDays ?: 1
+                    streakDays = validStreak
                 )
             }
         }
@@ -248,8 +252,9 @@ class IncrementWidgetProblemAction : ActionCallback {
         parameters: ActionParameters
     ) {
         val sliceId = parameters[SliceIdParamKey] ?: return
-        val dao = StudyDatabase.getInstance(context).studyDao()
-        val repository = StudyRepository(dao, context.applicationContext)
+        val appContext = context.applicationContext
+        val repository = (appContext as? com.chronos.hsc.ChronosApplication)?.container?.studyRepository
+            ?: StudyRepository(StudyDatabase.getInstance(appContext).studyDao(), appContext)
         repository.incrementProblemCounter(sliceId)
         ChronosStudyWidget().update(context, glanceId)
     }
@@ -262,9 +267,38 @@ class CompleteWidgetSliceAction : ActionCallback {
         parameters: ActionParameters
     ) {
         val sliceId = parameters[SliceIdParamKey] ?: return
-        val dao = StudyDatabase.getInstance(context).studyDao()
-        val repository = StudyRepository(dao, context.applicationContext)
-        repository.completeTaskSlice(sliceId)
+        val appContext = context.applicationContext
+        com.chronos.hsc.data.store.CustomSubjectAndAiStore.init(appContext)
+        com.chronos.hsc.data.store.BatchExamStore.init(appContext)
+        val repository = (appContext as? com.chronos.hsc.ChronosApplication)?.container?.studyRepository
+            ?: StudyRepository(StudyDatabase.getInstance(appContext).studyDao(), appContext)
+        val result = repository.completeTaskSlice(sliceId)
+        if (result != null) {
+            val todayEpoch = LocalDate.now().toEpochDay()
+            val sliceWithChain = SliceWithParentChain(
+                slice = result.completedSlice,
+                chain = result.parentChain,
+                siblingSlices = emptyList()
+            )
+            val matchedExam = com.chronos.hsc.data.store.BatchExamStore.logStudyHoursForMatchingSlice(sliceWithChain, 1.5f)
+            val customLink = com.chronos.hsc.data.store.CustomSubjectAndAiStore.getCustomSubjectForChain(result.parentChain.chainId)
+            val subName = customLink?.customSubjectName ?: result.parentChain.subject.fullName
+            val bucket = when {
+                result.completedSlice.scheduledDateEpochDay < todayEpoch || result.completedSlice.effectiveLagDays > 0 ->
+                    com.chronos.hsc.data.store.WorkloadBucket.COMEBACK_LEFTOVER
+                matchedExam != null || com.chronos.hsc.data.store.BatchExamStore.getActiveUpcomingExams(todayEpoch).any { it.matchesSlice(sliceWithChain) } ->
+                    com.chronos.hsc.data.store.WorkloadBucket.BATCH_EXAM
+                else -> com.chronos.hsc.data.store.WorkloadBucket.TODAY_NORMAL
+            }
+            com.chronos.hsc.data.store.CustomSubjectAndAiStore.recordCompletedSlice(bucket, subName, todayEpoch)
+            if (result.didConquerFinalCoreSlice) {
+                repository.spawnEbbinghausEchoes(
+                    chainId = result.parentChain.chainId,
+                    confidenceRating = com.chronos.hsc.data.local.ConfidenceRating.MEDIUM,
+                    fromEpochDay = todayEpoch
+                )
+            }
+        }
         ChronosStudyWidget().update(context, glanceId)
     }
 }

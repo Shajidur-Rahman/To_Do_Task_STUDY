@@ -14,16 +14,32 @@ object ChronosWorkScheduler {
     private const val WORK_MORNING_BRIEFING = "chronos_work_morning_briefing"
     private const val WORK_DOMINO_ALERT = "chronos_work_domino_alert"
 
+    private const val PREFS_NAME = "chronos_notification_prefs"
+    private const val KEY_MORNING_ENABLED = "key_morning_briefing_enabled"
+    private const val KEY_DOMINO_ENABLED = "key_domino_alerts_enabled"
+
+    fun isMorningBriefingEnabled(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_MORNING_ENABLED, true)
+
+    fun isDominoAlertsEnabled(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_DOMINO_ENABLED, true)
+
     fun scheduleDailyBriefing(context: Context, enabled: Boolean, forceUpdate: Boolean = false) {
+        if (forceUpdate) {
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_MORNING_ENABLED, enabled).apply()
+        }
         val workManager = WorkManager.getInstance(context)
         if (!enabled) {
             workManager.cancelUniqueWork(WORK_MORNING_BRIEFING)
             return
         }
 
-        val initialDelayMinutes = computeDelayUntilTargetTime(8, 0)
+        val initialDelayMillis = computeDelayMillisUntilTargetTime(8, 0)
         val request = PeriodicWorkRequestBuilder<DailyBriefingWorker>(24, TimeUnit.HOURS)
-            .setInitialDelay(initialDelayMinutes, TimeUnit.MINUTES)
+            .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
             .build()
 
         workManager.enqueueUniquePeriodicWork(
@@ -34,15 +50,19 @@ object ChronosWorkScheduler {
     }
 
     fun scheduleDominoAlerts(context: Context, enabled: Boolean, forceUpdate: Boolean = false) {
+        if (forceUpdate) {
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_DOMINO_ENABLED, enabled).apply()
+        }
         val workManager = WorkManager.getInstance(context)
         if (!enabled) {
             workManager.cancelUniqueWork(WORK_DOMINO_ALERT)
             return
         }
 
-        val initialDelayMinutes = computeDelayUntilTargetTime(21, 0)
+        val initialDelayMillis = computeDelayMillisUntilTargetTime(21, 0)
         val request = PeriodicWorkRequestBuilder<DominoAlertWorker>(24, TimeUnit.HOURS)
-            .setInitialDelay(initialDelayMinutes, TimeUnit.MINUTES)
+            .setInitialDelay(initialDelayMillis, TimeUnit.MILLISECONDS)
             .build()
 
         workManager.enqueueUniquePeriodicWork(
@@ -52,14 +72,14 @@ object ChronosWorkScheduler {
         )
     }
 
-    private fun computeDelayUntilTargetTime(targetHour: Int, targetMinute: Int): Long {
+    private fun computeDelayMillisUntilTargetTime(targetHour: Int, targetMinute: Int): Long {
         val now = LocalDateTime.now()
         val targetToday = now.with(LocalTime.of(targetHour, targetMinute, 0))
-        val targetTime = if (now.isAfter(targetToday)) {
+        val targetTime = if (!now.isBefore(targetToday)) {
             targetToday.plusDays(1)
         } else {
             targetToday
         }
-        return Duration.between(now, targetTime).toMinutes().coerceAtLeast(1L)
+        return Duration.between(now, targetTime).toMillis().coerceAtLeast(60_000L)
     }
 }

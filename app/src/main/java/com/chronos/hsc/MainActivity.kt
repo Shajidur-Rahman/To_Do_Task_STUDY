@@ -4,11 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.chronos.hsc.ui.components.AppUpdateDialog
 import com.chronos.hsc.ui.screens.MainScreen
@@ -40,7 +43,22 @@ class MainActivity : ComponentActivity() {
                 val downloadState by updateManager.downloadState.collectAsState()
                 val coroutineScope = rememberCoroutineScope()
 
+                val activity = this@MainActivity
+                DisposableEffect(activity) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            studyViewModel.refreshTodayIfNeeded()
+                            studyViewModel.syncNotificationPreferences(activity)
+                        }
+                    }
+                    activity.lifecycle.addObserver(observer)
+                    onDispose {
+                        activity.lifecycle.removeObserver(observer)
+                    }
+                }
+
                 LaunchedEffect(Unit) {
+                    studyViewModel.syncNotificationPreferences(activity)
                     updateManager.checkForUpdates()
                 }
 
@@ -50,13 +68,14 @@ class MainActivity : ComponentActivity() {
                     onOpenUpdate = { updateManager.showUpdateDialog() }
                 )
 
-                if (isDialogVisible && availableUpdate != null) {
+                val currentUpdate = availableUpdate
+                if (isDialogVisible && currentUpdate != null) {
                     AppUpdateDialog(
-                        updateInfo = availableUpdate!!,
+                        updateInfo = currentUpdate,
                         downloadState = downloadState,
                         onStartUpdate = {
                             coroutineScope.launch {
-                                updateManager.downloadAndInstall(availableUpdate!!)
+                                updateManager.downloadAndInstall(currentUpdate)
                             }
                         },
                         onRetryInstall = { apkUri ->
