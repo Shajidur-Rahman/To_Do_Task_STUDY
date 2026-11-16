@@ -33,8 +33,8 @@ android {
         applicationId = "com.chronos.hsc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.4.2"
+        versionCode = 22
+        versionName = "1.4.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

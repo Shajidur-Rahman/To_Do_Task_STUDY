@@ -194,8 +194,34 @@ class StudyRepository(
      * Syncs any overdue Boss Shields on application startup without inserting any fake data.
      */
     suspend fun initializeOnLaunch() {
-        syncOverdueBossShields(LocalDate.now().toEpochDay())
+        val todayEpochDay = LocalDate.now().toEpochDay()
+        clearStaleShiftLagOnTodayAndFuture(todayEpochDay)
+        syncOverdueBossShields(todayEpochDay)
         ChronosWidgetUpdater.requestUpdate(appContext)
+    }
+
+    /**
+     * Clears stale shiftLagCount / originalScheduledEpochDay drift on incomplete slices
+     * whose scheduledDateEpochDay is already today or in the future, leaving genuine
+     * past-due slices (< todayEpochDay) completely untouched.
+     */
+    suspend fun clearStaleShiftLagOnTodayAndFuture(todayEpochDay: Long): Int {
+        val stale = dao.getAllIncompleteSlicesOnce().filter { slice ->
+            slice.scheduledDateEpochDay >= todayEpochDay &&
+                (slice.shiftLagCount > 0 || slice.originalScheduledEpochDay < slice.scheduledDateEpochDay)
+        }
+        if (stale.isEmpty()) return 0
+
+        val cleaned = stale.map { slice ->
+            slice.copy(
+                originalScheduledEpochDay = slice.scheduledDateEpochDay,
+                shiftLagCount = 0
+            )
+        }
+        dao.updateSlices(cleaned)
+        cleaned.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
+        syncMgr()?.scheduleCloudPush()
+        return cleaned.size
     }
 
     // =========================================================================
@@ -547,7 +573,10 @@ class StudyRepository(
      */
     suspend fun executeDominoShift(todayEpochDay: Long): DominoShiftResult {
         val overdueSlices = dao.getOverdueIncompleteSlicesOnce(todayEpochDay)
-        if (overdueSlices.isEmpty()) return DominoShiftResult(0, 0)
+        if (overdueSlices.isEmpty()) {
+            clearStaleShiftLagOnTodayAndFuture(todayEpochDay)
+            return DominoShiftResult(0, 0)
+        }
 
         val affectedChainIds = overdueSlices.map { it.chainId }.distinct()
         var totalSlicesShifted = 0
@@ -572,27 +601,28 @@ class StudyRepository(
                             previousDate = resolvedDate
                             slice.copy(
                                 scheduledDateEpochDay = resolvedDate,
-                                shiftLagCount = slice.shiftLagCount + delta.toInt()
+                                originalScheduledEpochDay = resolvedDate,
+                                shiftLagCount = 0
                             )
                         }
                         dao.updateSlices(shiftedCore)
                         shiftedCore.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
                         totalSlicesShifted += shiftedCore.size
-                        totalSlicesShifted += shiftDownstreamLinkedChains(chainId, delta)
+                        totalSlicesShifted += shiftDownstreamLinkedChains(chainId, delta, resetLagBaseline = true)
                     }
                 }
             }
 
-            // Also shift any overdue retention echoes to today
+            // Also shift any overdue retention echoes to today cleanly
             val overdueEchoes = incompleteChainSlices.filter {
                 it.isRetentionEcho && it.scheduledDateEpochDay < todayEpochDay
             }
             if (overdueEchoes.isNotEmpty()) {
                 val shiftedEchoes = overdueEchoes.map {
-                    val echoDelta = (todayEpochDay - it.scheduledDateEpochDay).toInt().coerceAtLeast(1)
                     it.copy(
                         scheduledDateEpochDay = todayEpochDay,
-                        shiftLagCount = it.shiftLagCount + echoDelta
+                        originalScheduledEpochDay = todayEpochDay,
+                        shiftLagCount = 0
                     )
                 }
                 dao.updateSlices(shiftedEchoes)
@@ -601,6 +631,7 @@ class StudyRepository(
             }
         }
 
+        clearStaleShiftLagOnTodayAndFuture(todayEpochDay)
         syncOverdueBossShields(todayEpochDay)
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)
@@ -613,13 +644,13 @@ class StudyRepository(
     /**
      * Recursively shifts all downstream chains linked to [chainId] forward by [deltaDays].
      * Ensures that if Chain B is linked to Chain A, whenever Chain A shifts (+1d or overdue jump),
-     * Chain B and all downstream linked chains shift forward together, preserving the
-     * whole syllabus pipeline without overlapping.
+     * Chain B and all downstream linked chains shift forward together cleanly, preserving the
+     * whole syllabus pipeline without overlapping or adding artificial lag badges.
      */
     suspend fun shiftDownstreamLinkedChains(
         chainId: String,
         deltaDays: Long,
-        resetLagBaseline: Boolean = false
+        resetLagBaseline: Boolean = true
     ): Int {
         if (deltaDays <= 0L && !resetLagBaseline) return 0
         var totalShifted = 0
@@ -654,16 +685,18 @@ class StudyRepository(
 
     /**
      * Per-Card "Push Domino (+1 Day)":
-     * Shifts the selected slice and all subsequent incomplete slices in that chain forward by +1 day.
-     * Also pushes any downstream linked chapter chains forward by +1 day.
+     * Shifts the selected slice and all subsequent incomplete slices in that chain forward by +1 day
+     * cleanly (resetting lag baseline), and pushes downstream linked chapter chains forward by +1 day.
      */
     suspend fun pushSliceDominoPlusOneDay(sliceId: String): Int {
         val targetSlice = dao.getSliceById(sliceId) ?: return 0
         if (targetSlice.isRetentionEcho) {
+            val newDate = targetSlice.scheduledDateEpochDay + 1L
             dao.updateSlice(
                 targetSlice.copy(
-                    scheduledDateEpochDay = targetSlice.scheduledDateEpochDay + 1L,
-                    shiftLagCount = targetSlice.shiftLagCount + 1
+                    scheduledDateEpochDay = newDate,
+                    originalScheduledEpochDay = newDate,
+                    shiftLagCount = 0
                 )
             )
             syncMgr()?.recordSliceModified(targetSlice.sliceId)
@@ -680,14 +713,16 @@ class StudyRepository(
         if (incompleteChainSlices.isEmpty()) return 0
 
         val updated = incompleteChainSlices.map { slice ->
+            val newDate = slice.scheduledDateEpochDay + 1L
             slice.copy(
-                scheduledDateEpochDay = slice.scheduledDateEpochDay + 1L,
-                shiftLagCount = slice.shiftLagCount + 1
+                scheduledDateEpochDay = newDate,
+                originalScheduledEpochDay = newDate,
+                shiftLagCount = 0
             )
         }
         dao.updateSlices(updated)
         updated.forEach { syncMgr()?.recordSliceModified(it.sliceId) }
-        val downstreamShifted = shiftDownstreamLinkedChains(targetSlice.chainId, 1L)
+        val downstreamShifted = shiftDownstreamLinkedChains(targetSlice.chainId, 1L, resetLagBaseline = true)
         syncOverdueBossShields(LocalDate.now().toEpochDay())
         syncMgr()?.scheduleCloudPush()
         ChronosWidgetUpdater.requestUpdate(appContext)

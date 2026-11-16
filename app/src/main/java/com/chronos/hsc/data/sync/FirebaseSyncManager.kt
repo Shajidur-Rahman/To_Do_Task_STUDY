@@ -1159,7 +1159,7 @@ class FirebaseSyncManager(
             localTs > cloudTs -> false
             cloud.originalScheduledEpochDay != local.originalScheduledEpochDay ->
                 cloud.originalScheduledEpochDay > local.originalScheduledEpochDay
-            cloud.shiftLagCount > local.shiftLagCount -> true
+            cloud.shiftLagCount < local.shiftLagCount -> true
             else -> false
         }
         val scheduleOwner = if (preferCloudSchedule) cloud else local
