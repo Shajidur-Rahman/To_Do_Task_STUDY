@@ -571,7 +571,9 @@ object CustomSubjectAndAiStore {
                 list.add(arr.getString(i))
             }
         } catch (_: Exception) {}
-        list.add(subjectName)
+        if (!list.lastOrNull().equals(subjectName, ignoreCase = true)) {
+            list.add(subjectName)
+        }
         val trimmed = list.takeLast(3)
         val newArr = JSONArray(trimmed)
         sp.edit().putString(KEY_RECENT_SUBJECTS, newArr.toString()).apply()

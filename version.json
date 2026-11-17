@@ -1,6 +1,6 @@
 {
-  "versionCode": 24,
-  "versionName": "1.4.5",
+  "versionCode": 25,
+  "versionName": "1.4.6",
   "apkUrl": "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/release/app-release.apk",
-  "releaseNotes": "Chronos HSC v1.4.5: Upgraded AI Roulette & Batch Exam Engine to Gemini 4 Hydrogen (primary) -> Gemini 3.8 Flash -> Gemini 2.5 Flash with High thinking depth configured per model API spec and 25s read timeout."
+  "releaseNotes": "Chronos HSC v1.4.6: AI Spinner intelligence upgrade — collapses multi-day chains to earliest unfinished slice, fixes duplicate spin telemetry (+1 per lock), hard-excludes skipped slices on Re-Spin, enforces multi-subject cooldown rotation, and prioritizes nearly-finished quick wins & 15m Retention Echoes in Zombie Mode."
 }

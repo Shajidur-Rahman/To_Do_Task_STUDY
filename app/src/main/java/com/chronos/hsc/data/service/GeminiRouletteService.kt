@@ -369,12 +369,20 @@ object GeminiRouletteService {
         val preferredModel = CustomSubjectAndAiStore.getSelectedModel().trim()
         val rejectedSlices = CustomSubjectAndAiStore.getRejectedSlicesSession()
         val lastSpun = CustomSubjectAndAiStore.getLastSpunRecord()
-        val todayEpoch = LocalDate.now().toEpochDay()
         val bdTime = BangladeshTimeContext.now()
+        val todayEpoch = bdTime.zonedDateTime.toLocalDate().toEpochDay()
         val telemetry = CustomSubjectAndAiStore.getBucketRotationTelemetry(todayEpoch)
         val lastSpunSubject = lastSpun?.subjectName.orEmpty()
 
-        // 1. Partition Candidates into 3 Unified Workload Buckets
+        val nonRejectedCandidates = candidateSlices.filter { !rejectedSlices.contains(it.slice.sliceId) }
+        val activePool = if (nonRejectedCandidates.isNotEmpty()) {
+            nonRejectedCandidates
+        } else {
+            CustomSubjectAndAiStore.clearRejectedSlicesSession()
+            candidateSlices
+        }
+
+        // 1. Partition All Candidates for Honest Telemetry + Active Pool for Selection
         val comebackSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.COMEBACK_LEFTOVER }
         val todayNormalSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
         val batchExamSlices = candidateSlices.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.BATCH_EXAM }
@@ -386,11 +394,14 @@ object GeminiRouletteService {
             maxOf(it.slice.effectiveLagDays, daysOverdue)
         } ?: 0
 
-        // Cooldown & Batch Exam Cap Guards
-        val hasAlternativeSubject = candidateSlices.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
-        val isSubjectOnCooldown = lastSpunSubject.isNotBlank() && hasAlternativeSubject
-        val isBatchExamCapped = lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM ||
-            (telemetry.spinsBatchExam > 0 && (comebackSlices.isNotEmpty() || todayNormalSlices.isNotEmpty()) && telemetry.spinsBatchExam >= (telemetry.spinsTodayNormal + telemetry.spinsComeback))
+        // Multi-subject cooldown & Batch Exam Cap Guards
+        val cooldownSubjects = buildCooldownSubjectSet(telemetry, lastSpunSubject)
+        val nonCooldownInPool = applyMultiSubjectCooldown(activePool, cooldownSubjects, lastSpunSubject)
+        val isSubjectOnCooldown = cooldownSubjects.isNotEmpty() && nonCooldownInPool.size < activePool.size
+        val activeComeback = activePool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.COMEBACK_LEFTOVER }
+        val activeNormal = activePool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
+        val isBatchExamCapped = (lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM && (activeComeback.isNotEmpty() || activeNormal.isNotEmpty())) ||
+            (telemetry.spinsBatchExam > 0 && (activeComeback.isNotEmpty() || activeNormal.isNotEmpty()) && telemetry.spinsBatchExam >= (telemetry.spinsTodayNormal + telemetry.spinsComeback))
 
         // 2. Behavioral Override Analysis
         val mostRecentCompleted = allTodayCompletedSlices
@@ -422,7 +433,7 @@ object GeminiRouletteService {
         // 3. Build Upcoming Private Exams Array
         val upcomingExamsArray = JSONArray()
         for (exam in upcomingBatchExams.take(6)) {
-            val matchingCandidates = candidateSlices.filter { exam.matchesSlice(it) }
+            val matchingCandidates = activePool.filter { exam.matchesSlice(it) }
             upcomingExamsArray.put(
                 JSONObject().apply {
                     put("examId", exam.examId)
@@ -443,15 +454,20 @@ object GeminiRouletteService {
             )
         }
 
-        // 4. Build Candidate JSON for Gemini
+        // 4. Build Candidate JSON for Gemini from non-rejected activePool
         val candidateArray = JSONArray()
-        for (candidate in candidateSlices) {
+        for (candidate in activePool) {
             val cat = getCognitiveCategory(candidate)
             val subName = getSubjectName(candidate)
             val bucket = classifySliceBucket(candidate, todayEpoch, upcomingBatchExams)
             val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(candidate) }
-            val onCooldown = isSubjectOnCooldown && subName.equals(lastSpunSubject, ignoreCase = true)
+            val normalizedSub = subName.trim().lowercase(Locale.US)
+            val onCooldown = isSubjectOnCooldown && (normalizedSub in cooldownSubjects)
             val daysOverdue = (todayEpoch - candidate.slice.scheduledDateEpochDay).coerceAtLeast(0L)
+            val remainingProblems = (candidate.slice.problemsTarget - candidate.slice.problemsCompleted).coerceAtLeast(0)
+            val isAlmostFinishedQuickWin = candidate.slice.problemsTarget > 0 &&
+                candidate.slice.problemsCompleted > 0 &&
+                remainingProblems in 1..2
 
             candidateArray.put(
                 JSONObject().apply {
@@ -468,11 +484,13 @@ object GeminiRouletteService {
                     put("cognitiveWeight", cat.name)
                     put("cognitiveLabel", cat.label)
                     put("phaseTag", candidate.slice.phaseTag)
+                    put("isRetentionEcho", candidate.slice.isRetentionEcho)
                     put("problemsProgress", "${candidate.slice.problemsCompleted}/${candidate.slice.problemsTarget}")
+                    put("remainingProblems", remainingProblems)
+                    put("isAlmostFinishedQuickWin", isAlmostFinishedQuickWin)
                     put("daysOverdue", daysOverdue)
                     put("effectiveLagDays", maxOf(candidate.slice.effectiveLagDays.toLong(), daysOverdue))
                     put("isLagging", candidate.slice.isLagging || daysOverdue > 0L)
-                    put("isRejectedInSession", rejectedSlices.contains(candidate.slice.sliceId))
                     put("isSubjectOnCooldown", onCooldown)
                     if (matchingExam != null) {
                         put("hasUpcomingExam", true)
@@ -517,7 +535,7 @@ object GeminiRouletteService {
 
             📊 STUDENT'S LIVE PACE & BACKLOG TELEMETRY TODAY:
             - Completed Slices Today: $totalCompletedToday
-            - Remaining Incomplete Slices in Pool: $totalRemainingCount
+            - Remaining Incomplete Slices in Queue: $totalRemainingCount (Actionable Choices Shown: ${activePool.size})
             - Overdue / Lagging Slices from Yesterday & Past Days: ${comebackSlices.size} (Max Lag: ${maxLagDays}d)
             - Today's Regular Syllabus Slices Pending: ${todayNormalSlices.size}
             - Private / Coaching Exam Slices Pending: ${batchExamSlices.size}
@@ -529,16 +547,15 @@ object GeminiRouletteService {
             - Spun Today: Comeback=${telemetry.spinsComeback}, Today Normal=${telemetry.spinsTodayNormal}, Batch Exam=${telemetry.spinsBatchExam}
             - Completed Today: Comeback=${telemetry.completedComeback}, Today Normal=${telemetry.completedTodayNormal}, Batch Exam=${telemetry.completedBatchExam}
             - Recent Subjects Studied/Spun: ${if (telemetry.recentSubjects.isEmpty()) "None yet" else telemetry.recentSubjects.joinToString(" ➔ ")}
-            - Last Spun Subject: ${if (lastSpunSubject.isBlank()) "None" else lastSpunSubject} (Cooldown Active: $isSubjectOnCooldown)
+            - Last Spun Subject: ${if (lastSpunSubject.isBlank()) "None" else lastSpunSubject} (Multi-Subject Cooldown Active: $isSubjectOnCooldown)
             - Batch Exam Cap Status: ${if (isBatchExamCapped) "⛔ CAPPED (Batch Exam spun/completed recently. Must prioritize Comeback or Today Normal!)" else "✅ AVAILABLE"}
 
             CRITICAL ANTI-BIAS & BALANCED ROTATION RULES:
             1. NO EXAM TUNNEL VISION: DO NOT repeatedly pick only Batch Exam tasks. Target workload distribution: ~35% Comeback Leftovers, ~40% Today Normal Tasks, ~25% Batch Exams.
             2. BATCH EXAM CAP: If Batch Exam is capped ($isBatchExamCapped) and Comeback or Today Normal tasks exist, you MUST pick from Comeback or Today Normal!
-            3. SUBJECT COOLDOWN: If a candidate has `isSubjectOnCooldown: true`, DO NOT select it unless all candidates belong to the same subject.
-            4. CIRCADIAN HARMONY: Align with ${bdTime.bdCircadianPhase}.
-            5. COGNITIVE ALTERNATION: Alternate HEAVY_ANALYTICAL calculation with SOFT_MEMORIZATION or BALANCED_CONCEPTUAL.
-            6. AVOID REJECTED: Do NOT select any slice with `isRejectedInSession == true` if other candidates exist.
+            3. SUBJECT COOLDOWN: If any candidate has `isSubjectOnCooldown: false`, DO NOT select a candidate with `isSubjectOnCooldown: true` so subjects keep rotating cleanly!
+            4. CIRCADIAN HARMONY & BATTERY MODE: Align with ${bdTime.bdCircadianPhase}. If battery <= 20% (ZOMBIE_MODE), strongly prefer `isRetentionEcho: true` (15m review) or `SOFT_MEMORIZATION` slices.
+            5. COGNITIVE ALTERNATION & QUICK WINS: Alternate HEAVY_ANALYTICAL calculation with SOFT_MEMORIZATION or BALANCED_CONCEPTUAL. Give a helpful priority boost to `isAlmostFinishedQuickWin: true` slices (1-2 problems away from completion!).
 
             🧠 RULES FOR PART B — COACH REALITY CHECK ("HOW YOU ARE GOING"):
             - Analyze $totalCompletedToday completed vs $totalRemainingCount remaining and ${comebackSlices.size} lagging tasks.
@@ -589,25 +606,13 @@ object GeminiRouletteService {
                 model = model,
                 apiKey = apiKey,
                 prompt = prompt,
-                candidateSlices = candidateSlices,
+                candidateSlices = activePool,
+                totalPendingCount = candidateSlices.size,
                 totalCompletedToday = totalCompletedToday,
                 comebackCount = comebackSlices.size,
                 userStreakDays = userStreakDays
             )
             if (result != null) {
-                val winner = candidateSlices.find { it.slice.sliceId == result.selectedSliceId }
-                if (winner != null) {
-                    val winnerBucket = classifySliceBucket(winner, todayEpoch, upcomingBatchExams)
-                    val winnerSubName = getSubjectName(winner)
-                    CustomSubjectAndAiStore.recordSpin(
-                        sliceId = winner.slice.sliceId,
-                        title = winner.slice.displayTitle,
-                        subjectName = winnerSubName,
-                        category = getCognitiveCategory(winner),
-                        bucket = winnerBucket,
-                        todayEpochDay = todayEpoch
-                    )
-                }
                 CustomSubjectAndAiStore.saveLastRecommendation(result)
                 return@withContext result
             }
@@ -627,11 +632,48 @@ object GeminiRouletteService {
         fallback
     }
 
+    private fun buildCooldownSubjectSet(
+        telemetry: BucketRotationTelemetry,
+        lastSpunSubject: String
+    ): Set<String> {
+        val set = telemetry.recentSubjects
+            .map { it.trim().lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .takeLast(2)
+            .toMutableSet()
+        if (lastSpunSubject.isNotBlank()) {
+            set.add(lastSpunSubject.trim().lowercase(Locale.US))
+        }
+        return set
+    }
+
+    private fun applyMultiSubjectCooldown(
+        list: List<SliceWithParentChain>,
+        cooldownSubjects: Set<String>,
+        lastSpunSubject: String
+    ): List<SliceWithParentChain> {
+        if (list.isEmpty()) return list
+        if (cooldownSubjects.isNotEmpty()) {
+            val strictFiltered = list.filter {
+                getSubjectName(it).trim().lowercase(Locale.US) !in cooldownSubjects
+            }
+            if (strictFiltered.isNotEmpty()) return strictFiltered
+        }
+        if (lastSpunSubject.isNotBlank()) {
+            val lastOnly = list.filter {
+                !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true)
+            }
+            if (lastOnly.isNotEmpty()) return lastOnly
+        }
+        return list
+    }
+
     private fun queryGeminiModel(
         model: String,
         apiKey: String,
         prompt: String,
         candidateSlices: List<SliceWithParentChain>,
+        totalPendingCount: Int,
         totalCompletedToday: Int,
         comebackCount: Int,
         userStreakDays: Int
@@ -645,6 +687,7 @@ object GeminiRouletteService {
         return parseGeminiResponse(
             jsonString = responseText,
             candidateSlices = candidateSlices,
+            totalPendingCount = totalPendingCount,
             totalCompletedToday = totalCompletedToday,
             comebackCount = comebackCount,
             userStreakDays = userStreakDays
@@ -734,6 +777,7 @@ object GeminiRouletteService {
     private fun parseGeminiResponse(
         jsonString: String,
         candidateSlices: List<SliceWithParentChain>,
+        totalPendingCount: Int = candidateSlices.size,
         totalCompletedToday: Int,
         comebackCount: Int,
         userStreakDays: Int
@@ -746,7 +790,7 @@ object GeminiRouletteService {
             val defaultCoach = buildDefaultCoachDiagnostics(
                 winner = matchingCandidate,
                 totalCompletedToday = totalCompletedToday,
-                totalPendingCount = candidateSlices.size,
+                totalPendingCount = totalPendingCount,
                 comebackCount = comebackCount,
                 userStreakDays = userStreakDays
             )
@@ -769,6 +813,29 @@ object GeminiRouletteService {
         }
     }
 
+    private fun scoreHeuristicSlice(
+        item: SliceWithParentChain,
+        daysOverdue: Int,
+        batteryPercent: Int
+    ): Int {
+        val remaining = (item.slice.problemsTarget - item.slice.problemsCompleted).coerceAtLeast(0)
+        val isStarted = item.slice.problemsTarget > 0 && item.slice.problemsCompleted > 0
+        val quickWinBonus = when {
+            isStarted && remaining in 1..2 -> 20
+            isStarted && remaining > 0 -> 8
+            else -> 0
+        }
+        val fatigueBonus = if (
+            batteryPercent <= 20 &&
+            (item.slice.isRetentionEcho || getCognitiveCategory(item) == CognitiveLoadCategory.SOFT_MEMORIZATION)
+        ) {
+            30
+        } else {
+            0
+        }
+        return daysOverdue * 10 + item.slice.xpMultiplier + quickWinBonus + fatigueBonus
+    }
+
     fun runSmartCognitiveAlternatingHeuristic(
         candidateSlices: List<SliceWithParentChain>,
         allTodayCompletedSlices: List<SliceWithParentChain>,
@@ -786,6 +853,7 @@ object GeminiRouletteService {
         val telemetry = CustomSubjectAndAiStore.getBucketRotationTelemetry(todayEpoch)
         val lastSpun = CustomSubjectAndAiStore.getLastSpunRecord()
         val lastSpunSubject = lastSpun?.subjectName.orEmpty()
+        val cooldownSubjects = buildCooldownSubjectSet(telemetry, lastSpunSubject)
 
         val mostRecentCompleted = allTodayCompletedSlices
             .filter { it.slice.isCompleted }
@@ -797,17 +865,10 @@ object GeminiRouletteService {
         val tList = pool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.TODAY_NORMAL }
         val bList = pool.filter { classifySliceBucket(it, todayEpoch, upcomingBatchExams) == WorkloadBucket.BATCH_EXAM }
 
-        // Anti-Bias Guard 1: Subject Cooldown (don't repeat the exact same subject if other subjects exist)
-        val hasDiffSubject = pool.any { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
-        fun applyCooldown(list: List<SliceWithParentChain>): List<SliceWithParentChain> {
-            if (!hasDiffSubject || lastSpunSubject.isBlank()) return list
-            val filtered = list.filter { !getSubjectName(it).equals(lastSpunSubject, ignoreCase = true) }
-            return if (filtered.isNotEmpty()) filtered else list
-        }
-
-        val filteredC = applyCooldown(cList)
-        val filteredT = applyCooldown(tList)
-        val filteredB = applyCooldown(bList)
+        // Anti-Bias Guard 1: Multi-Subject Cooldown (rotate away from last 2 distinct recent subjects when alternatives exist)
+        val filteredC = applyMultiSubjectCooldown(cList, cooldownSubjects, lastSpunSubject)
+        val filteredT = applyMultiSubjectCooldown(tList, cooldownSubjects, lastSpunSubject)
+        val filteredB = applyMultiSubjectCooldown(bList, cooldownSubjects, lastSpunSubject)
 
         // Anti-Bias Guard 2: Batch Exam Cap
         val isBatchExamCapped = (lastSpun?.workloadBucket == WorkloadBucket.BATCH_EXAM && (filteredC.isNotEmpty() || filteredT.isNotEmpty())) ||
@@ -834,6 +895,11 @@ object GeminiRouletteService {
             maxOf(item.slice.effectiveLagDays, overdue)
         }
 
+        val matchesTargetMode: (SliceWithParentChain) -> Boolean = { item ->
+            getCognitiveCategory(item) == targetCategory ||
+                (batteryPercent <= 20 && item.slice.isRetentionEcho)
+        }
+
         val otherNonEmptySpinsMin = listOfNotNull(
             if (filteredT.isNotEmpty()) telemetry.spinsTodayNormal else null,
             if (filteredB.isNotEmpty() && !isBatchExamCapped) telemetry.spinsBatchExam else null
@@ -846,10 +912,10 @@ object GeminiRouletteService {
             )
 
         if (shouldPickComeback) {
-            // Pick COMEBACK_LEFTOVER: prioritize highest days overdue / lag or matching cognitive category
-            selectedSlice = filteredC.filter { getCognitiveCategory(it) == targetCategory }
-                .maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
-                ?: filteredC.maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
+            // Pick COMEBACK_LEFTOVER: prioritize overdue/lag + started quick-wins + Zombie Mode Retention Echoes
+            val preferred = filteredC.filter(matchesTargetMode)
+            selectedSlice = (preferred.ifEmpty { filteredC })
+                .maxByOrNull { scoreHeuristicSlice(it, daysOverdueOf(it), batteryPercent) }
                 ?: filteredC.first()
             val subName = getSubjectName(selectedSlice)
             val lagCount = daysOverdueOf(selectedSlice)
@@ -857,9 +923,10 @@ object GeminiRouletteService {
             whyText = "Rescuing overdue slice for $subName (Ch ${selectedSlice.chain.chapterNumber}, Lag: ${lagCount}d) to stop compounding backlog."
             nextText = "After this 25m sprint, proceed to today's core syllabus tasks."
         } else if (filteredT.isNotEmpty() && (isBatchExamCapped || filteredB.isEmpty() || telemetry.spinsTodayNormal <= telemetry.spinsBatchExam)) {
-            // Pick TODAY_NORMAL: prioritize matching target category, then xpMultiplier
-            selectedSlice = filteredT.filter { getCognitiveCategory(it) == targetCategory }
-                .maxByOrNull { it.slice.xpMultiplier }
+            // Pick TODAY_NORMAL: prioritize matching target category/Zombie echo, quick-wins, and xpMultiplier
+            val preferred = filteredT.filter(matchesTargetMode)
+            selectedSlice = (preferred.ifEmpty { filteredT })
+                .maxByOrNull { scoreHeuristicSlice(it, daysOverdueOf(it), batteryPercent) }
                 ?: filteredT.first()
             val subName = getSubjectName(selectedSlice)
             val cat = getCognitiveCategory(selectedSlice)
@@ -867,13 +934,16 @@ object GeminiRouletteService {
             whyText = "Advancing core syllabus for $subName Ch ${selectedSlice.chain.chapterNumber} (${cat.label}) during ${bdTime.bdCircadianPhase} to maintain steady daily pace."
             nextText = "Next, rotate to an analytical problem-solving sprint or private exam drill."
         } else if (filteredB.isNotEmpty()) {
-            // Pick BATCH_EXAM: prioritize closest upcoming exam deadline
+            // Pick BATCH_EXAM: prioritize closest upcoming exam deadline, breaking ties with quick-win/fatigue score
             val urgentExams = upcomingBatchExams
                 .filter { it.daysLeft(todayEpoch) in 0L..7L }
                 .sortedBy { it.daysLeft(todayEpoch) }
             selectedSlice = urgentExams.firstNotNullOfOrNull { exam ->
-                filteredB.firstOrNull { exam.matchesSlice(it) }
-            } ?: filteredB.first()
+                filteredB
+                    .filter { exam.matchesSlice(it) }
+                    .maxByOrNull { scoreHeuristicSlice(it, daysOverdueOf(it), batteryPercent) }
+            } ?: filteredB.maxByOrNull { scoreHeuristicSlice(it, daysOverdueOf(it), batteryPercent) }
+                ?: filteredB.first()
             val matchingExam = upcomingBatchExams.firstOrNull { it.matchesSlice(selectedSlice) }
             val subName = getSubjectName(selectedSlice)
             val days = matchingExam?.daysLeft(todayEpoch) ?: 0L
@@ -886,28 +956,17 @@ object GeminiRouletteService {
             whyText = "Targeted drill for $subName Ch ${selectedSlice.chain.chapterNumber}: upcoming ${matchingExam?.batchOrCoachingName ?: "coaching exam"} $daysStr (${matchingExam?.formatSummary ?: "MCQ/CQ"})."
             nextText = "After this sprint, transition to a regular syllabus slice to prevent cognitive fatigue."
         } else {
-            // Fallback from general pool
-            selectedSlice = pool.filter { getCognitiveCategory(it) == targetCategory }
-                .maxByOrNull { daysOverdueOf(it) * 10 + it.slice.xpMultiplier }
-                ?: pool.first()
+            // Fallback from general pool with multi-subject cooldown
+            val cooldownPool = applyMultiSubjectCooldown(pool, cooldownSubjects, lastSpunSubject)
+            val preferred = cooldownPool.filter(matchesTargetMode)
+            selectedSlice = (preferred.ifEmpty { cooldownPool })
+                .maxByOrNull { scoreHeuristicSlice(it, daysOverdueOf(it), batteryPercent) }
+                ?: cooldownPool.first()
             val subName = getSubjectName(selectedSlice)
             transitionTag = "⚡ COGNITIVE REBOUND | Brain Channel Switch"
             whyText = "Targeted $subName Ch ${selectedSlice.chain.chapterNumber} to balance cognitive load and maintain study rhythm."
             nextText = "Next, we will rotate to a contrasting conceptual block."
         }
-
-        val winnerBucket = classifySliceBucket(selectedSlice, todayEpoch, upcomingBatchExams)
-        val winnerSubName = getSubjectName(selectedSlice)
-        val winnerCat = getCognitiveCategory(selectedSlice)
-
-        CustomSubjectAndAiStore.recordSpin(
-            sliceId = selectedSlice.slice.sliceId,
-            title = selectedSlice.slice.displayTitle,
-            subjectName = winnerSubName,
-            category = winnerCat,
-            bucket = winnerBucket,
-            todayEpochDay = todayEpoch
-        )
 
         val behaviorNote = if (overrideNote.isNotBlank()) {
             overrideNote.trim()

@@ -111,6 +111,11 @@ data class StudyUiState(
         get() = (overdueSlices + todaySlices + rawDateSlices)
             .distinctBy { it.slice.sliceId }
             .filter { !it.slice.isCompleted && it.slice.scheduledDateEpochDay <= todayEpochDay }
+            .sortedWith(
+                compareBy<SliceWithParentChain> { it.slice.scheduledDateEpochDay }
+                    .thenBy { it.slice.sliceNumber }
+            )
+            .distinctBy { it.chain.chainId to it.slice.isRetentionEcho }
 }
 
 private data class ModalControlState(

@@ -210,8 +210,11 @@ fun TaskRouletteModal(
                     return@launch
                 }
 
+                val nonRejected = incompleteSlices.filter {
+                    !CustomSubjectAndAiStore.getRejectedSlicesSession().contains(it.slice.sliceId)
+                }.ifEmpty { incompleteSlices }
                 val winner = incompleteSlices.find { it.slice.sliceId == rec?.selectedSliceId }
-                    ?: incompleteSlices.filter { it.slice.sliceId != previousLockedId }.ifEmpty { incompleteSlices }.random()
+                    ?: nonRejected.filter { it.slice.sliceId != previousLockedId }.ifEmpty { nonRejected }.random()
                 val targetWinnerIdx = incompleteSlices.indexOf(winner).coerceAtLeast(0)
 
                 val currentMod = step % poolSize
