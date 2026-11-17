@@ -62,9 +62,9 @@ fun AiRouletteSettingsDialog(
     var selectedModel by remember { mutableStateOf(CustomSubjectAndAiStore.getSelectedModel()) }
 
     val availableModels = listOf(
-        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH to "gemini-2.5-flash (Primary Model)",
-        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE to "gemini-2.5-flash-lite (Fast Fallback)",
-        CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH to "gemini-2.0-flash (Legacy Fallback)"
+        CustomSubjectAndAiStore.MODEL_GEMINI_4_HYDROGEN to "gemini-4-hydrogen (Primary • High Thinking)",
+        CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH to "gemini-3.8-flash (Fallback 1 • High Thinking)",
+        CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH to "gemini-2.5-flash (Fallback 2 • High Thinking)"
     )
 
     Dialog(onDismissRequest = onDismiss) {

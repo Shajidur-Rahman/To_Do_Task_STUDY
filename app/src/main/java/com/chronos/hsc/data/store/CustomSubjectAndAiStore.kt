@@ -140,6 +140,7 @@ object CustomSubjectAndAiStore {
             ""
         }
     }
+    const val MODEL_GEMINI_4_HYDROGEN = "gemini-4-hydrogen"
     const val MODEL_GEMINI_3_8_FLASH = "gemini-3.8-flash"
     const val MODEL_GEMINI_3_5_FLASH = "gemini-3.5-flash"
     const val MODEL_GEMINI_2_5_FLASH = "gemini-2.5-flash"
@@ -147,6 +148,7 @@ object CustomSubjectAndAiStore {
     const val MODEL_GEMINI_2_0_FLASH = "gemini-2.0-flash"
     const val ROULETTE_PASSCODE = "4488"
     private const val KEY_ROULETTE_UNLOCKED = "key_roulette_security_unlocked"
+    private const val KEY_MODEL_V145_MIGRATED = "key_gemini_model_v145_migrated"
 
     val COLOR_PRESETS = listOf(
         0xFF00E5FF, // Cyan
@@ -176,7 +178,14 @@ object CustomSubjectAndAiStore {
 
     fun init(context: Context) {
         if (prefs == null) {
-            prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs = sp
+            if (!sp.getBoolean(KEY_MODEL_V145_MIGRATED, false)) {
+                sp.edit()
+                    .putString(KEY_MODEL, MODEL_GEMINI_4_HYDROGEN)
+                    .putBoolean(KEY_MODEL_V145_MIGRATED, true)
+                    .apply()
+            }
             _customSubjectsFlow.value = getCustomSubjects()
             _chainLinksFlow.value = getAllChainLinks()
         }
@@ -422,10 +431,9 @@ object CustomSubjectAndAiStore {
     }
 
     fun getSelectedModel(): String {
-        val raw = getPrefs().getString(KEY_MODEL, MODEL_GEMINI_2_5_FLASH)?.trim().orEmpty()
+        val raw = getPrefs().getString(KEY_MODEL, MODEL_GEMINI_4_HYDROGEN)?.trim().orEmpty()
         return when {
-            raw.isEmpty() || raw == MODEL_GEMINI_3_8_FLASH || raw == MODEL_GEMINI_3_5_FLASH ->
-                MODEL_GEMINI_2_5_FLASH
+            raw.isEmpty() || raw == MODEL_GEMINI_3_5_FLASH -> MODEL_GEMINI_4_HYDROGEN
             else -> raw
         }
     }

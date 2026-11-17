@@ -1,6 +1,6 @@
 {
-  "versionCode": 23,
-  "versionName": "1.4.4",
+  "versionCode": 24,
+  "versionName": "1.4.5",
   "apkUrl": "https://raw.githubusercontent.com/Shajidur-Rahman/To_Do_Task_STUDY/main/release/app-release.apk",
-  "releaseNotes": "Chronos HSC v1.4.4: Comprehensive reliability, sync, AI, and study engine hardening — fixed Room migration safety on upgrade, topological linked-chain catch-up, zero-data-loss Firestore sync conflict & listener races, live midnight rollover, home widget action sync & streak validation, backup completeness (custom subjects, chain links, batch exams & tombstones), Gemini model reliability, Neuro-Gym timer/XP accuracy, and swipe/UI edge cases."
+  "releaseNotes": "Chronos HSC v1.4.5: Upgraded AI Roulette & Batch Exam Engine to Gemini 4 Hydrogen (primary) -> Gemini 3.8 Flash -> Gemini 2.5 Flash with High thinking depth configured per model API spec and 25s read timeout."
 }

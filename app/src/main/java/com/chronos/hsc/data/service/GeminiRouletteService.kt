@@ -135,9 +135,9 @@ object GeminiRouletteService {
 
         val modelsToTry = listOf(
             preferredModel,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH
+            CustomSubjectAndAiStore.MODEL_GEMINI_4_HYDROGEN,
+            CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH
         ).distinct()
 
         for (model in modelsToTry) {
@@ -151,11 +151,16 @@ object GeminiRouletteService {
         computeLocalExamEvaluation(subjectName, paperName, chapterNumbersAndTitles, examFormatMode, mcqCount, cqCount, daysLeft)
     }
 
-    private fun queryGeminiExamEvaluation(
+    /**
+     * Calls the Gemini generateContent endpoint with High thinking enabled per model series
+     * and returns the raw HTTP JSON body on 2xx responses.
+     */
+    private fun executeGeminiGenerateContent(
         model: String,
         apiKey: String,
-        prompt: String
-    ): BatchExamAiEvaluation? {
+        prompt: String,
+        temperature: Double
+    ): String? {
         if (apiKey.isBlank()) return null
         var connection: HttpURLConnection? = null
         return try {
@@ -163,8 +168,8 @@ object GeminiRouletteService {
             val url = URL(endpointUrl)
             connection = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 10000
-                readTimeout = 12000
+                connectTimeout = 12000
+                readTimeout = 25000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("x-goog-api-key", apiKey)
@@ -183,13 +188,7 @@ object GeminiRouletteService {
                     )
                 }
                 put("contents", contents)
-                put(
-                    "generationConfig",
-                    JSONObject().apply {
-                        put("responseMimeType", "application/json")
-                        put("temperature", 0.25)
-                    }
-                )
+                put("generationConfig", buildHighThinkingGenerationConfig(model, temperature))
             }
 
             OutputStreamWriter(connection.outputStream).use { writer ->
@@ -197,10 +196,8 @@ object GeminiRouletteService {
                 writer.flush()
             }
 
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                parseExamEvaluationResponse(responseText)
+            if (connection.responseCode in 200..299) {
+                connection.inputStream.bufferedReader().use { it.readText() }
             } else {
                 null
             }
@@ -211,16 +208,46 @@ object GeminiRouletteService {
         }
     }
 
-    private fun parseExamEvaluationResponse(jsonString: String): BatchExamAiEvaluation? {
+    private fun buildHighThinkingGenerationConfig(
+        model: String,
+        temperature: Double
+    ): JSONObject = JSONObject().apply {
+        put("responseMimeType", "application/json")
+        put("temperature", temperature)
+        when {
+            model.startsWith("gemini-2.5", ignoreCase = true) -> {
+                put("thinkingConfig", JSONObject().apply {
+                    put("thinkingBudget", 24576)
+                })
+            }
+            model.startsWith("gemini-3", ignoreCase = true) ||
+                model.startsWith("gemini-4", ignoreCase = true) -> {
+                put("thinkingConfig", JSONObject().apply {
+                    put("thinkingLevel", "high")
+                })
+            }
+        }
+    }
+
+    private fun extractNonThoughtJsonObject(jsonString: String): JSONObject? {
         return try {
             val root = JSONObject(jsonString)
             val candidates = root.getJSONArray("candidates")
             if (candidates.length() == 0) return null
-            val firstCandidate = candidates.getJSONObject(0)
-            val content = firstCandidate.getJSONObject("content")
-            val parts = content.getJSONArray("parts")
+            val parts = candidates.getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
             if (parts.length() == 0) return null
-            val rawText = parts.getJSONObject(0).getString("text")
+
+            var rawText: String? = null
+            for (i in 0 until parts.length()) {
+                val partObj = parts.getJSONObject(i)
+                if (!partObj.optBoolean("thought", false) && partObj.has("text")) {
+                    rawText = partObj.getString("text")
+                    break
+                }
+            }
+            if (rawText.isNullOrBlank()) return null
 
             val startIdx = rawText.indexOf('{')
             val endIdx = rawText.lastIndexOf('}')
@@ -229,18 +256,35 @@ object GeminiRouletteService {
             } else {
                 rawText.trim()
             }
-            val parsed = JSONObject(cleanJson)
-
-            BatchExamAiEvaluation(
-                difficultyScore = parsed.optInt("difficultyScore", 6).coerceIn(1, 10),
-                difficultyLabel = parsed.optString("difficultyLabel", "🔥 Analytical Load (6/10)"),
-                estimatedTotalStudyHours = parsed.optDouble("estimatedTotalStudyHours", 4.5).toFloat().coerceIn(1.0f, 30.0f),
-                importanceScore = parsed.optInt("importanceScore", 70).coerceIn(1, 100),
-                prepStrategyAdvice = parsed.optString("prepStrategyAdvice", "Prioritize key formula drills and solve past board question stems.")
-            )
+            JSONObject(cleanJson)
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun queryGeminiExamEvaluation(
+        model: String,
+        apiKey: String,
+        prompt: String
+    ): BatchExamAiEvaluation? {
+        val responseText = executeGeminiGenerateContent(
+            model = model,
+            apiKey = apiKey,
+            prompt = prompt,
+            temperature = 0.25
+        ) ?: return null
+        return parseExamEvaluationResponse(responseText)
+    }
+
+    private fun parseExamEvaluationResponse(jsonString: String): BatchExamAiEvaluation? {
+        val parsed = extractNonThoughtJsonObject(jsonString) ?: return null
+        return BatchExamAiEvaluation(
+            difficultyScore = parsed.optInt("difficultyScore", 6).coerceIn(1, 10),
+            difficultyLabel = parsed.optString("difficultyLabel", "🔥 Analytical Load (6/10)"),
+            estimatedTotalStudyHours = parsed.optDouble("estimatedTotalStudyHours", 4.5).toFloat().coerceIn(1.0f, 30.0f),
+            importanceScore = parsed.optInt("importanceScore", 70).coerceIn(1, 100),
+            prepStrategyAdvice = parsed.optString("prepStrategyAdvice", "Prioritize key formula drills and solve past board question stems.")
+        )
     }
 
     fun computeLocalExamEvaluation(
@@ -535,9 +579,9 @@ object GeminiRouletteService {
         // 7. Query Gemini with model fallback chain
         val modelsToTry = listOf(
             preferredModel,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH_LITE,
-            CustomSubjectAndAiStore.MODEL_GEMINI_2_0_FLASH
+            CustomSubjectAndAiStore.MODEL_GEMINI_4_HYDROGEN,
+            CustomSubjectAndAiStore.MODEL_GEMINI_3_8_FLASH,
+            CustomSubjectAndAiStore.MODEL_GEMINI_2_5_FLASH
         ).distinct()
 
         for (model in modelsToTry) {
@@ -592,65 +636,19 @@ object GeminiRouletteService {
         comebackCount: Int,
         userStreakDays: Int
     ): AiRouletteRecommendation? {
-        if (apiKey.isBlank()) return null
-        var connection: HttpURLConnection? = null
-        return try {
-            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
-            val url = URL(endpointUrl)
-            connection = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 12000
-                readTimeout = 14000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("x-goog-api-key", apiKey)
-                setRequestProperty("User-Agent", "ChronosHSC-AI-Engine")
-            }
-
-            val requestJson = JSONObject().apply {
-                val contents = JSONArray().apply {
-                    put(
-                        JSONObject().apply {
-                            val parts = JSONArray().apply {
-                                put(JSONObject().apply { put("text", prompt) })
-                            }
-                            put("parts", parts)
-                        }
-                    )
-                }
-                put("contents", contents)
-                put(
-                    "generationConfig",
-                    JSONObject().apply {
-                        put("responseMimeType", "application/json")
-                        put("temperature", 0.35)
-                    }
-                )
-            }
-
-            OutputStreamWriter(connection.outputStream).use { writer ->
-                writer.write(requestJson.toString())
-                writer.flush()
-            }
-
-            val responseCode = connection.responseCode
-            if (responseCode in 200..299) {
-                val responseText = connection.inputStream.bufferedReader().use { it.readText() }
-                parseGeminiResponse(
-                    jsonString = responseText,
-                    candidateSlices = candidateSlices,
-                    totalCompletedToday = totalCompletedToday,
-                    comebackCount = comebackCount,
-                    userStreakDays = userStreakDays
-                )
-            } else {
-                null
-            }
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection?.disconnect()
-        }
+        val responseText = executeGeminiGenerateContent(
+            model = model,
+            apiKey = apiKey,
+            prompt = prompt,
+            temperature = 0.35
+        ) ?: return null
+        return parseGeminiResponse(
+            jsonString = responseText,
+            candidateSlices = candidateSlices,
+            totalCompletedToday = totalCompletedToday,
+            comebackCount = comebackCount,
+            userStreakDays = userStreakDays
+        )
     }
 
     private fun buildDefaultCoachDiagnostics(
@@ -741,23 +739,7 @@ object GeminiRouletteService {
         userStreakDays: Int
     ): AiRouletteRecommendation? {
         return try {
-            val root = JSONObject(jsonString)
-            val candidates = root.getJSONArray("candidates")
-            if (candidates.length() == 0) return null
-            val firstCandidate = candidates.getJSONObject(0)
-            val content = firstCandidate.getJSONObject("content")
-            val parts = content.getJSONArray("parts")
-            if (parts.length() == 0) return null
-            val rawText = parts.getJSONObject(0).getString("text")
-
-            val startIdx = rawText.indexOf('{')
-            val endIdx = rawText.lastIndexOf('}')
-            val cleanJson = if (startIdx >= 0 && endIdx > startIdx) {
-                rawText.substring(startIdx, endIdx + 1)
-            } else {
-                rawText.trim()
-            }
-            val parsed = JSONObject(cleanJson)
+            val parsed = extractNonThoughtJsonObject(jsonString) ?: return null
 
             val sliceId = parsed.getString("selectedSliceId")
             val matchingCandidate = candidateSlices.find { it.slice.sliceId == sliceId } ?: return null
